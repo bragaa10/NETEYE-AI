@@ -63,7 +63,7 @@ Follow these steps to run NetEye locally from source:
 ### 1. Clone the Repository
 Open Command Prompt (`cmd`) and navigate to your directory of choice, then run:
 ```cmd
-git clone https://github.com/your-username/NetEyeAI.git
+git clone https://github.com/bragaa10/NETEYE-AI.git
 cd NetEyeAI
 ```
 
