@@ -1,0 +1,94 @@
+{
+  "navegar": [
+    "abre", "vai para", "acede a", "entra em", "abre o site",
+    "navega para", "carrega", "vai ao", "vai à", "abre a página"
+  ],
+  "pesquisar": [
+    "pesquisa", "pesquisa por", "procura", "procura por", "search",
+    "busca", "busca por", "encontra", "googla", "googla por"
+  ],
+  "ler": [
+    "lê", "lê a página", "lê o conteúdo", "o que está aqui",
+    "o que diz", "lê tudo", "descreve a página", "o que tem",
+    "conta-me o que está", "o que vês"
+  ],
+  "clicar": [
+    "clica", "clica em", "prime", "prime em", "seleciona",
+    "seleciona o", "abre o", "entra no", "carrega em", "escolhe"
+  ],
+  "voltar": [
+    "volta", "volta atrás", "vai atrás", "página anterior",
+    "recua", "back", "retrocede"
+  ],
+  "avançar": [
+    "avança", "vai à frente", "próxima página", "forward"
+  ],
+  "rolar_baixo": [
+    "desce", "scroll down", "rola para baixo", "vai para baixo",
+    "continua", "mais conteúdo", "desce a página"
+  ],
+  "rolar_cima": [
+    "sobe", "scroll up", "rola para cima", "vai para cima",
+    "volta ao início", "sobe a página"
+  ],
+  "parar": [
+    "para", "stop", "silêncio", "cala", "cala-te", "chega",
+    "cancela", "para de falar"
+  ],
+  "repetir": [
+    "repete", "repete isso", "diz outra vez", "não ouvi",
+    "mais alto", "o que disseste"
+  ],
+  "fechar": [
+    "fecha", "fecha a aba", "fecha o browser", "fecha a janela",
+    "sai", "sai do browser"
+  ],
+  "nova_aba": [
+    "nova aba", "abre uma aba nova", "abre nova tab", "nova tab"
+  ],
+  "favoritos": [
+    "favoritos", "os meus favoritos", "sites guardados",
+    "adiciona aos favoritos", "guarda este site"
+  ],
+  "ajuda": [
+    "ajuda", "o que posso dizer", "comandos", "o que podes fazer",
+    "como funciona", "exemplos", "help"
+  ],
+
+  "_correcoes_foneticas": {
+    "pode aceitar": "aceitar",
+    "poida se iter": "aceitar",
+    "poida seiter": "aceitar",
+    "pode assater": "aceitar",
+    "pode asseitar": "aceitar",
+    "pode aceiter": "aceitar",
+    "pod aceitar": "aceitar",
+    "pode acitar": "aceitar",
+    "pode aceptar": "aceitar",
+    "pode acete": "aceitar",
+    "podia se iter": "aceitar",
+    "podia seiter": "aceitar",
+    "poida se itar": "aceitar",
+    "aceitar tudo": "aceitar tudo",
+    "assitar tudo": "aceitar tudo",
+    "aceite tudo": "aceitar tudo",
+    "rejeitar tudo": "rejeitar tudo",
+    "io-tube": "youtube",
+    "io tube": "youtube",
+    "you tube": "youtube",
+    "utube": "youtube",
+    "u tube": "youtube",
+    "puffover": "por favor",
+    "prover": "por favor",
+    "pfv": "por favor",
+    "pf": "por favor",
+    "face book": "facebook",
+    "insta gram": "instagram",
+    "what sapp": "whatsapp",
+    "goo gle": "google",
+    "gone gle": "google",
+    "gugol": "google",
+    "wiquipedia": "wikipedia",
+    "wikip dia": "wikipedia"
+  }
+}

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="header-titles">
+        <h2>Configurações</h2>
+        <p>Personalize a voz e o comportamento do assistente</p>
+    </div>
+</div>
+
+<form method="POST" action="{{ url_for('settings') }}" class="row g-4">
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h3 class="card-title">🎙️ Voz e Idioma</h3>
+
+                <div class="mb-4">
+                    <label for="voz_local" class="form-label">Seletor de Voz (SAPI5)</label>
+                    <select id="voz_local" name="voz_local" class="form-select">
+                        <option value="">A carregar vozes...</option>
+                    </select>
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-12">
+                        <label for="velocidade" class="form-label">
+                            Velocidade de Fala (<span id="velocidadeValue" class="fw-semibold">{{ configs.get('velocidade', 135) }}</span>)
+                        </label>
+                        <input type="range" id="velocidade" name="velocidade" class="form-range" min="80" max="250" value="{{ configs.get('velocidade', 135) }}">
+                        <div class="d-flex justify-content-between text-secondary small"><span>Lento</span><span>Rápido</span></div>
+                    </div>
+                    <div class="col-12">
+                        <label for="volume" class="form-label">
+                            Volume (<span id="volumeValue" class="fw-semibold">{{ configs.get('volume', 100) }}%</span>)
+                        </label>
+                        <input type="range" id="volume" name="volume" class="form-range" min="0" max="100" value="{{ configs.get('volume', 100) }}">
+                    </div>
+                </div>
+
+                <button type="button" id="btn-test-voice" class="btn btn-outline-light">Testar Voz</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <h3 class="card-title">🧠 Comportamento</h3>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="talker_ativo" name="talker_ativo" {% if configs.get('talker_ativo') == 'True' %}checked{% endif %}>
+                    <label class="form-check-label" for="talker_ativo">Talker Ativo (Diz avisos enquanto processa)</label>
+                </div>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="interromper_ao_falar" name="interromper_ao_falar" {% if configs.get('interromper_ao_falar') == 'True' %}checked{% endif %}>
+                    <label class="form-check-label" for="interromper_ao_falar">Interromper voz ao falar</label>
+                </div>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="guardar_historico" name="guardar_historico" {% if configs.get('guardar_historico') == 'True' %}checked{% endif %}>
+                    <label class="form-check-label" for="guardar_historico">Guardar Histórico de navegação</label>
+                </div>
+
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="modo_headless" name="modo_headless" {% if configs.get('modo_headless') == 'True' %}checked{% endif %}>
+                    <label class="form-check-label" for="modo_headless">Modo Headless (Browser invisível)</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <h3 class="card-title">🔑 Conta e API</h3>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label for="username" class="form-label">Nome de Utilizador</label>
+                        <input type="text" id="username" name="username" class="form-control" value="{{ user }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label for="api_key" class="form-label">Chave API Anthropic</label>
+                        <input type="password" id="api_key" name="api_key" class="form-control" value="{{ configs.get('api_key', '') }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 d-flex justify-content-end gap-3 align-items-center">
+        {% if request.args.get('success') %}
+        <div class="alert alert-success mb-0">Configurações guardadas com sucesso!</div>
+        {% endif %}
+        <button type="submit" class="btn btn-primary">Guardar Alterações</button>
+    </div>
+</form>
+
+<script>
+    fetch('/api/voices')
+        .then(r => r.json())
+        .then(data => {
+            const select = document.getElementById('voz_local');
+            select.innerHTML = '';
+
+            if (data.error) {
+                console.error('Erro ao carregar vozes:', data.error);
+                return;
+            }
+
+            if (!Array.isArray(data)) {
+                console.error('Resposta de vozes não é um array');
+                return;
+            }
+
+            data.forEach(v => {
+                const opt = document.createElement('option');
+                opt.value = v.id;
+                opt.textContent = v.name;
+                if (v.id === {{ configs.get('voz_local') | tojson | safe }}) opt.selected = true;
+                select.appendChild(opt);
+            });
+        })
+        .catch(err => console.error('Erro ao buscar vozes:', err));
+
+    const velocidadeInput = document.getElementById('velocidade');
+    const volumeInput = document.getElementById('volume');
+    const velocidadeValue = document.getElementById('velocidadeValue');
+    const volumeValue = document.getElementById('volumeValue');
+
+    function updateSliderValue(input, display, suffix = '') {
+        if (!input || !display) return;
+        display.textContent = `${input.value}${suffix}`;
+    }
+
+    if (velocidadeInput && velocidadeValue) {
+        velocidadeInput.addEventListener('input', () => updateSliderValue(velocidadeInput, velocidadeValue));
+        updateSliderValue(velocidadeInput, velocidadeValue);
+    }
+
+    if (volumeInput && volumeValue) {
+        volumeInput.addEventListener('input', () => updateSliderValue(volumeInput, volumeValue, '%'));
+        updateSliderValue(volumeInput, volumeValue, '%');
+    }
+
+    };
+</script>
+{% endblock %}

@@ -1,0 +1,44 @@
+# ============================================================
+#  NetEye — config/settings.yaml
+# ============================================================
+
+assistente:
+  nome: "NetEye"
+  idioma: "pt-PT"
+  voz_tts: "pt-PT-DuarteNeural"
+  voice_id: "XrExE9yKIg1WjnnlVkGX"      # Daniel (PT-BR) de alta qualidade
+  model_id: "eleven_turbo_v2_5"
+  velocidade: 1.15
+  volume: 1.0
+  # Configurações ElevenLabs
+  stability: 0.5
+  similarity_boost: 0.8
+  style: 0.0
+  use_speaker_boost: true
+
+stt:
+  modelo_whisper: "base"   # usando o "base" para reduzir drasticamente o atraso
+  idioma_whisper: "pt"
+
+  dispositivo: "cpu"        # "cpu" | "cuda" (requer CUDA 12 instalado)
+
+vad:
+  aggressividade: 1                      # 0=permissivo → menos falsos positivos
+  silencio_para_processar: 0.45          # aguarda o minimo possivel 0.45s 
+  tempo_minimo_fala: 0.3                 # ignora clips curtos ruídos
+
+browser:
+  modo_headless: false
+  timeout_pagina: 5              # reduzido de 10 para melhor responsividade
+  navegador: "chromium"
+
+claude:
+  modelo: "claude-haiku-4-5-20251001"   # modelo mais rápido e barato
+  max_tokens: 350                        # forçar respostas extremamente curtas
+  temperatura: 0.0                       # determinístico = mais consistente
+
+base_dados:
+  caminho: "data/neteye.db"
+
+logging:
+  nivel: "INFO"

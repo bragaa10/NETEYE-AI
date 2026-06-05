@@ -1,0 +1,26 @@
+{
+  "name": "neteyeai",
+  "version": "1.0.0",
+  "description": "**PAP 2025–26 · Herik Braga · Nº7**",
+  "main": "index.js",
+  "scripts": {
+    "build-css": "sass static/style.scss static/style.css",
+    "watch-css": "sass --watch static/style.scss:static/style.css",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a32488-jpg/NetEyeAI.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/a32488-jpg/NetEyeAI/issues"
+  },
+  "homepage": "https://github.com/a32488-jpg/NetEyeAI#readme",
+  "dependencies": {
+    "bootstrap": "^5.3.8",
+    "sass": "^1.99.0"
+  }
+}

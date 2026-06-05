@@ -1,0 +1,42 @@
+# ============================================================
+#  NetEye — requirements.txt
+#  Instalar com: pip install -r requirements.txt
+# ============================================================
+
+# --- Reconhecimento de Voz (STT) ---
+faster-whisper==1.0.3         # 4x mais rápido que openai-whisper
+sounddevice==0.4.6
+webrtcvad-wheels==2.0.14
+numpy==1.26.4
+scipy==1.13.0
+
+# --- Síntese de Voz (TTS) ---
+elevenlabs==1.5.0
+python-dotenv==1.0.1
+pyttsx3==2.90                 # offline fallback
+
+# --- Navegação Web ---
+playwright==1.44.0
+beautifulsoup4==4.12.3
+lxml==5.2.2
+
+# --- Visão Computacional (fallback OCR) ---
+opencv-python==4.9.0.80
+easyocr==1.7.1
+mss==9.0.1
+Pillow==10.3.0
+
+# --- IA / API ---
+anthropic>=0.28.0
+
+# --- Base de Dados & Config ---
+pyyaml==6.0.1
+supabase==2.4.0
+
+# --- Utilitários ---
+colorama==0.4.6
+rich==13.7.1
+
+# --- Interface Web ---
+Flask==3.0.3
+Flask-Session==0.8.0

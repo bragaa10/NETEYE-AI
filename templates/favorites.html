@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="header-titles">
+        <h2>Favoritos</h2>
+        <p>Acesso rápido aos seus sites preferidos</p>
+    </div>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalFav">+ Novo Favorito</button>
+</div>
+
+<div class="modal fade" id="modalFav" tabindex="-1" aria-labelledby="modalFavLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content text-white bg-dark border-secondary">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalFavLabel">Adicionar Favorito</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+                <form method="POST" action="{{ url_for('favorites') }}" id="favoriteForm">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Nome do Site</label>
+                        <input type="text" id="name" name="name" class="form-control" required placeholder="Ex: Google">
+                    </div>
+                    <div class="mb-3">
+                        <label for="url" class="form-label">Endereço (URL)</label>
+                        <input type="url" id="url" name="url" class="form-control" required placeholder="https://...">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-top border-secondary">
+                <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" form="favoriteForm" class="btn btn-primary">Guardar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card entries-card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Nome</th>
+                        <th>URL</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for fav in favorites %}
+                    <tr>
+                        <td class="fw-semibold">{{ fav.nome }}</td>
+                        <td><code class="url-code">{{ fav.url }}</code></td>
+                        <td class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-light btn-copy" data-url="{{ fav.url }}">Copiar</button>
+                            <a href="{{ url_for('delete_favorite', id=fav.id) }}" class="btn btn-sm btn-danger">Eliminar</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" class="empty">Ainda não adicionou favoritos.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.querySelectorAll('.btn-copy').forEach(btn => {
+        btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(btn.dataset.url);
+            const original = btn.textContent;
+            btn.textContent = 'Copiado!';
+            setTimeout(() => btn.textContent = original, 2000);
+        });
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,72 @@
+# ============================================================
+#  NetEyeAI — .gitignore
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+*.whl
+
+# ---------- Virtual Environments ----------
+venv/
+.venv/
+env/
+ENV/
+
+# ---------- IDE / Editor ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- Build & Distribution ----------
+build/
+dist/
+*.spec
+*.exe
+*.rar
+*.zip
+
+# ---------- PyInstaller ----------
+*.manifest
+*.log
+
+# ---------- ML Models (Whisper cache) ----------
+models/
+
+# ---------- Cloned Dependencies ----------
+py-webrtcvad/
+
+# ---------- Node.js ----------
+node_modules/
+package-lock.json
+
+# ---------- Flask Sessions ----------
+flask_session/
+
+# ---------- Scratch / Debug Scripts ----------
+scratch/
+
+# ---------- Database Files ----------
+data/*.db
+
+# ---------- Environment & Secrets ----------
+.env
+NetEyeMind.txt
+
+# ---------- SCSS Source Maps ----------
+*.css.map
+
+# ---------- OS Files ----------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ---------- Internal Documentation ----------
+AUDITORIA_NETEYE_COMPLETA.md
+DOCUMENTACAO_DO_NETEYE.md
+MAPA_DESENVOLVIMENTO.md
