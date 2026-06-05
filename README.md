@@ -266,7 +266,6 @@ NetEyeAI/
 This application is developed in the scope of the **Professional Aptitude Project (PAP)** (*Prova de Aptidão Profissional*) for the Professional Course of Informatics at the academic year **2025–2026**.
 
 * **Author**: Herik Braga
-* **Student ID**: No. 7
 * **Objective**: Enhance digital accessibility by enabling blind and visually impaired users to browse the web with absolute comfort using a conversational, tool-equipped AI agent.
 
 ### License
