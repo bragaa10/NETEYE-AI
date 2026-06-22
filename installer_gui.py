@@ -182,7 +182,19 @@ class NetEyeInstaller(ctk.CTk):
             # 3. Extração
             self.after(0, lambda: self.status_lbl.configure(text="A extrair ficheiros..."))
             target = os.path.abspath(self.install_path)
-            if os.path.exists(target): shutil.rmtree(target)
+            
+            # Função para remover atributo de somente leitura no Windows em caso de erro
+            def remove_readonly(func, path, excinfo):
+                import stat
+                try:
+                    os.chmod(path, stat.S_IWRITE)
+                    func(path)
+                except Exception:
+                    pass
+                    
+            if os.path.exists(target):
+                shutil.rmtree(target, onerror=remove_readonly)
+                
             os.makedirs(target, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(target)
@@ -193,8 +205,14 @@ class NetEyeInstaller(ctk.CTk):
             if len(conteudo) == 1 and os.path.isdir(os.path.join(target, conteudo[0])):
                 nested_dir = os.path.join(target, conteudo[0])
                 for item in os.listdir(nested_dir):
-                    shutil.move(os.path.join(nested_dir, item), target)
-                os.rmdir(nested_dir)
+                    try:
+                        shutil.move(os.path.join(nested_dir, item), target)
+                    except Exception:
+                        pass
+                try:
+                    shutil.rmtree(nested_dir, onerror=remove_readonly)
+                except Exception:
+                    pass
 
             # 4. Instalar Requisitos (requirements.txt)
             self.after(0, lambda: self.status_lbl.configure(text="A instalar dependências (requirements.txt)..."))
