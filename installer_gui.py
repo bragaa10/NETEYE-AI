@@ -182,6 +182,9 @@ class NetEyeInstaller(ctk.CTk):
             # 3. Extração
             self.after(0, lambda: self.status_lbl.configure(text="A extrair ficheiros..."))
             target = os.path.abspath(self.install_path)
+            if not target.lower().endswith("neteyeai"):
+                target = os.path.join(target, "NetEyeAI")
+            self.install_path = target
             
             # Função para remover atributo de somente leitura no Windows em caso de erro
             def remove_readonly(func, path, excinfo):
@@ -192,7 +195,7 @@ class NetEyeInstaller(ctk.CTk):
                 except Exception:
                     pass
                     
-            if os.path.exists(target):
+            if os.path.exists(target) and target.lower().endswith("neteyeai"):
                 shutil.rmtree(target, onerror=remove_readonly)
                 
             os.makedirs(target, exist_ok=True)
@@ -217,22 +220,25 @@ class NetEyeInstaller(ctk.CTk):
             # 4. Instalar Requisitos (requirements.txt)
             self.after(0, lambda: self.status_lbl.configure(text="A instalar dependências (requirements.txt)..."))
             req_file = os.path.join(target, "requirements.txt")
+            real_python = getattr(sys, '_base_executable', None) or sys.executable
             if os.path.exists(req_file):
-                subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, capture_output=True)
+                # Executar pip install usando o executável python real de forma silenciosa
+                subprocess.run([real_python, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, capture_output=True)
 
             # 5. Atalho
             if self.create_shortcut.get():
                 self.after(0, lambda: self.status_lbl.configure(text="A criar atalho na Área de Trabalho..."))
                 exe = os.path.join(target, "NetEyeAI.exe")
-                # Se NetEyeAI.exe não existir, criamos o atalho para run_gui.py usando o python atual
+                # Se NetEyeAI.exe não existir, criamos o atalho para run_gui.py usando o pythonw.exe
                 if not os.path.exists(exe):
-                    py_exe = sys.executable
+                    pyw_exe = real_python.lower().replace("python.exe", "pythonw.exe")
+                    if not os.path.exists(pyw_exe):
+                        pyw_exe = real_python
                     script_path = os.path.join(target, "run_gui.py")
                     lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
-                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{py_exe}';$s.Arguments='\"{script_path}\"';$s.WorkingDirectory='{target}';$s.IconLocation='{os.path.join(target, 'static', 'logo.ico')},0';$s.Save()"
+                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{pyw_exe}';$s.Arguments='\"{script_path}\"';$s.WorkingDirectory='{target}';$s.IconLocation='{os.path.join(target, 'static', 'logo.ico')},0';$s.Save()"
                 else:
-                    lnk = os.environ["USERPROFILE"] + r"\Desktop\NetEyeAI.lnk"
-                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{exe}';$s.WorkingDirectory='{target}';$s.IconLocation='{exe},0';$s.Save()"
+                    lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
                 subprocess.run(["powershell", "-Command", ps], capture_output=True)
 
             self.after(500, lambda: self._show_step(6))
@@ -246,19 +252,35 @@ class NetEyeInstaller(ctk.CTk):
         self.status_lbl.configure(text=msg)
 
     def _next_step(self):
-        if self.current_step == 3: self.install_path = self.path_entry.get().strip()
+        if self.current_step == 3:
+            path = self.path_entry.get().strip()
+            if not path.lower().endswith("neteyeai"):
+                path = os.path.join(path, "NetEyeAI")
+            self.install_path = path
         if self.current_step == 6: return
         self.current_step += 1; self._show_step(self.current_step)
 
     def _prev_step(self): self.current_step -= 1; self._show_step(self.current_step)
     def _browse_path(self):
         p = filedialog.askdirectory(initialdir=self.install_path)
-        if p: self.path_entry.delete(0, "end"); self.path_entry.insert(0, p)
+        if p:
+            if not p.lower().endswith("neteyeai"):
+                p = os.path.join(p, "NetEyeAI")
+            self.path_entry.delete(0, "end")
+            self.path_entry.insert(0, p)
 
     def _finish_all(self):
         if self.launch_after.get():
             exe = os.path.join(self.install_path, "NetEyeAI.exe")
-            if os.path.exists(exe): subprocess.Popen([exe], cwd=self.install_path, shell=True)
+            if os.path.exists(exe):
+                subprocess.Popen([exe], cwd=self.install_path, shell=True)
+            else:
+                real_python = getattr(sys, '_base_executable', None) or sys.executable
+                pyw_exe = real_python.lower().replace("python.exe", "pythonw.exe")
+                if not os.path.exists(pyw_exe):
+                    pyw_exe = real_python
+                script_path = os.path.join(self.install_path, "run_gui.py")
+                subprocess.Popen([pyw_exe, script_path], cwd=self.install_path)
         self.destroy()
 
 if __name__ == "__main__":
