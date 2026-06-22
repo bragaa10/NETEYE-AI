@@ -148,14 +148,23 @@ class NetEyeInstaller(ctk.CTk):
 
     def _run_web_installation(self):
         try:
-            # 1. Obter Download URL do GitHub
-            api_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-            res = requests.get(api_url, timeout=10); res.raise_for_status()
-            for asset in res.json().get("assets", []):
-                if asset["name"] == ASSET_NAME:
-                    self.download_url = asset["browser_download_url"]
-                    break
-            if not self.download_url: raise Exception("ZIP não encontrado no GitHub.")
+            # 1. Obter Download URL do GitHub (tentar release ou fallback para main branch)
+            self.download_url = None
+            try:
+                api_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+                res = requests.get(api_url, timeout=10)
+                if res.status_code == 200:
+                    for asset in res.json().get("assets", []):
+                        if asset["name"] == ASSET_NAME:
+                            self.download_url = asset["browser_download_url"]
+                            break
+            except Exception:
+                pass
+
+            # Se não houver releases, descarrega o zip da branch main diretamente
+            if not self.download_url:
+                self.after(0, lambda: self.status_lbl.configure(text="A usar a branch main do repositório..."))
+                self.download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/main.zip"
 
             # 2. Download
             zip_path = "temp_install.zip"
@@ -166,7 +175,8 @@ class NetEyeInstaller(ctk.CTk):
                 with open(zip_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk); done += len(chunk)
-                        pct = int((done / total) * 100)
+                        # Se o tamanho total for desconhecido (como no zip do GitHub), envia progresso fictício
+                        pct = int((done / total) * 100) if total > 0 else 50
                         self.after(0, lambda p=pct: self._update_progress(p, "A descarregar..."))
             
             # 3. Extração
@@ -178,11 +188,18 @@ class NetEyeInstaller(ctk.CTk):
                 zip_ref.extractall(target)
             os.remove(zip_path)
 
+            # Mover ficheiros se estiverem dentro de uma pasta aninhada (ex: NETEYE-AI-main)
+            conteudo = os.listdir(target)
+            if len(conteudo) == 1 and os.path.isdir(os.path.join(target, conteudo[0])):
+                nested_dir = os.path.join(target, conteudo[0])
+                for item in os.listdir(nested_dir):
+                    shutil.move(os.path.join(nested_dir, item), target)
+                os.rmdir(nested_dir)
+
             # 4. Instalar Requisitos (requirements.txt)
             self.after(0, lambda: self.status_lbl.configure(text="A instalar dependências (requirements.txt)..."))
             req_file = os.path.join(target, "requirements.txt")
             if os.path.exists(req_file):
-                # Executar pip install usando o executável python atual de forma silenciosa
                 subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, capture_output=True)
 
             # 5. Atalho
