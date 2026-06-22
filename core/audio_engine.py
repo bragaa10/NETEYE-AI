@@ -14,6 +14,9 @@ from rich.console import Console
 
 console = Console()
 
+# Instância global de lock para evitar colisões no PortAudio
+audio_lock = threading.Lock()
+
 class AudioEngine:
     """
     Motor de áudio simples para sons de interface (WAV).
@@ -40,16 +43,17 @@ class AudioEngine:
     def _play_wav(self, path: str):
         """Lógica interna de reprodução WAV."""
         try:
-            with wave.open(path, "rb") as wf:
-                params = wf.getparams()
-                frames = wf.readframes(params.nframes)
-                audio_data = np.frombuffer(frames, dtype=np.int16)
-                
-                # Normalizar para float32 se necessário ou usar int16 diretamente
-                sd.play(audio_data, samplerate=params.framerate, blocking=False)
-                # O sd.play não bloqueia, mas a thread termina logo. 
-                # Precisamos de esperar que o som termine ou usar sd.wait()
-                sd.wait()
+            with audio_lock:
+                with wave.open(path, "rb") as wf:
+                    params = wf.getparams()
+                    frames = wf.readframes(params.nframes)
+                    audio_data = np.frombuffer(frames, dtype=np.int16)
+                    
+                    # Normalizar para float32 se necessário ou usar int16 diretamente
+                    sd.play(audio_data, samplerate=params.framerate, blocking=False)
+                    # O sd.play não bloqueia, mas a thread termina logo. 
+                    # Precisamos de esperar que o som termine ou usar sd.wait()
+                    sd.wait()
         except Exception as e:
             console.print(f"[dim red]Erro ao tocar som {os.path.basename(path)}: {e}[/dim red]")
 

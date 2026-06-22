@@ -59,12 +59,11 @@ class Transcriber:
         compute_type = "int8" if dispositivo == "cpu" else "float16"
         console.print(f"[dim]⏳ A carregar faster-whisper '{modelo}' [{compute_type}]...[/dim]")
 
-        # Bug 6: Inicializar com timeout compatível com Windows (Thread join)
-        init_res = {"model": None, "error": None}
+        init_res = {"error": None}
 
         def _init_model():
             try:
-                init_res["model"] = WhisperModel(
+                self.modelo = WhisperModel(
                     modelo,
                     device=dispositivo,
                     compute_type=compute_type,
@@ -72,27 +71,27 @@ class Transcriber:
                     num_workers=1,
                     download_root="./models",
                 )
+                console.print(f"[dim green]✓ faster-whisper '{modelo}' pronto.[/dim green]")
             except Exception as e:
                 init_res["error"] = e
+                console.print(f"[yellow]⚠ Erro ao carregar faster-whisper: {e}.[/yellow]")
 
-        thread = threading.Thread(target=_init_model, daemon=True)
-        thread.start()
-        thread.join(timeout=60.0)
-
-        if thread.is_alive():
-            console.print(f"[yellow]⚠ Timeout ao carregar faster-whisper (60s). O carregamento continuará em background.[/yellow]")
-            # O modelo poderá ficar disponível mais tarde se o download terminar
-        elif init_res["error"]:
-            console.print(f"[yellow]⚠ Erro ao carregar faster-whisper: {init_res['error']}.[/yellow]")
-        else:
-            self.modelo = init_res["model"]
-            console.print(f"[dim green]✓ faster-whisper '{modelo}' pronto.[/dim green]")
+        self.thread_init = threading.Thread(target=_init_model, daemon=True)
+        self.thread_init.start()
+        # Dar tolerância curta no startup
+        self.thread_init.join(timeout=0.5)
 
     def transcrever(self, caminho_audio: str) -> str:
-        if not self.modelo:
-            return ""
-            
         if not caminho_audio or not os.path.exists(caminho_audio):
+            return ""
+
+        if not self.modelo:
+            if hasattr(self, "thread_init") and self.thread_init.is_alive():
+                try: os.unlink(caminho_audio)
+                except: pass
+                return "MODELO_CARREGANDO"
+            try: os.unlink(caminho_audio)
+            except: pass
             return ""
 
         try:
@@ -128,11 +127,12 @@ class Transcriber:
                             threshold=0.45,
                         ),
                     )
-                    resultado["segmentos"] = segmentos
+                    # Consumir o generator no worker thread para processar o áudio lá
+                    resultado["segmentos"] = list(segmentos) if segmentos is not None else None
                 except Exception as e:
                     resultado["erro"] = e
             
-            thread = threading.Thread(target=_transcrever, daemon=False)
+            thread = threading.Thread(target=_transcrever, daemon=True)
             thread.start()
             thread.join(timeout=30.0)
             
@@ -152,15 +152,16 @@ class Transcriber:
             if texto:
                 console.print(f"[dim]🗣️  ({duracao:.1f}s): [bold white]{texto}[/bold white][/dim]")
 
-            try:
-                os.unlink(caminho_audio)
-            except: pass
-
             return texto
 
         except Exception as e:
             console.print(f"[red]Erro na transcrição: {e}[/red]")
             return ""
+        finally:
+            try:
+                if os.path.exists(caminho_audio):
+                    os.unlink(caminho_audio)
+            except: pass
 
     def _carregar_wav(self, caminho: str) -> np.ndarray | None:
         try:

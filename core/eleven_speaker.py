@@ -19,7 +19,8 @@ from typing import Optional
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
 from rich.console import Console
-from core.audio_engine import audio_engine
+from core.audio_engine import audio_engine, audio_lock
+import re as _re
 
 console = Console()
 
@@ -176,20 +177,21 @@ class ElevenSpeaker:
                 voice_settings=self.voice_settings
             )
 
-            # Usar samplerate fixo da ElevenLabs, mas o volume é aplicado via numpy
-            with sd.OutputStream(samplerate=16000, channels=1, dtype='int16') as stream:
-                self._stream = stream
-                for chunk in audio_generator:
-                    if self._stop_event.is_set():
-                        break
-                    
-                    if chunk:
-                        audio_data = np.frombuffer(chunk, dtype=np.int16)
-                        # Aplicar volume (Func 9)
-                        if self.volume != 1.0:
-                            audio_data = (audio_data.astype(np.float32) * self.volume).clip(-32768, 32767).astype(np.int16)
+            # Usar audio_lock para evitar colisão com AudioEngine
+            with audio_lock:
+                with sd.OutputStream(samplerate=16000, channels=1, dtype='int16') as stream:
+                    self._stream = stream
+                    for chunk in audio_generator:
+                        if self._stop_event.is_set():
+                            break
                         
-                        stream.write(audio_data)
+                        if chunk:
+                            audio_data = np.frombuffer(chunk, dtype=np.int16)
+                            # Aplicar volume (Func 9)
+                            if self.volume != 1.0:
+                                audio_data = (audio_data.astype(np.float32) * self.volume).clip(-32768, 32767).astype(np.int16)
+                            
+                            stream.write(audio_data)
         except Exception as e:
             raise e
 
@@ -218,8 +220,18 @@ class ElevenSpeaker:
             if not encontrou and self.voice_id:
                 engine.setProperty('voice', self.voice_id)
             
-            engine.say(texto)
-            engine.runAndWait()
+            # Dividir texto em frases para permitir interrupção entre cada uma
+            frases = _re.split(r'(?<=[.!?;])\s+', texto)
+            if not frases:
+                frases = [texto]
+            
+            for frase in frases:
+                if self._stop_event.is_set():
+                    break
+                if frase.strip():
+                    engine.say(frase.strip())
+                    engine.runAndWait()
+            
             pythoncom.CoUninitialize()
         except Exception as e:
             console.print(f"[dim red]Falha crítica: Fallback local indisponível ({e}).[/dim red]")

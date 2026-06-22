@@ -139,7 +139,7 @@ def start_assistant():
     
     if assistant_process is None or assistant_process.poll() is not None:
         user_id = session["user_id"]
-        api_key = db.obter_configuracao(user_id, "api_key")
+        api_key = db.obter_configuracao(user_id, "api_key") or os.environ.get("ANTHROPIC_API_KEY")
         
         # Validar se API key está configurada
         if not api_key or not api_key.strip():
@@ -148,9 +148,12 @@ def start_assistant():
         
         headless = db.obter_configuracao(user_id, "modo_headless", "False") == "True"
         
-        # Usar o Python do venv explicitamente
+        # Usar o Python do venv se existir, senão o Python do sistema
         venv_python = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
-        cmd = [venv_python, "main.py", "--chave-api", api_key, "--user-id", str(user_id)]
+        if not os.path.exists(venv_python):
+            venv_python = sys.executable
+            
+        cmd = [venv_python, "main.py", "--user-id", str(user_id)]
         if headless:
             cmd.append("--headless")
         
@@ -162,10 +165,8 @@ def start_assistant():
                 text=True,
                 encoding="utf-8",
                 bufsize=1,
-                # Forçar UTF-8 para o subprocesso
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"}
-
-
+                # Injetar a chave API no ambiente do subprocesso de forma segura
+                env={**os.environ, "PYTHONIOENCODING": "utf-8", "ANTHROPIC_API_KEY": api_key}
             )
             process_logs = []
             return jsonify({"status": "started"})

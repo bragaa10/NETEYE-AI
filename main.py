@@ -46,6 +46,7 @@ class NetEye:
             if k == "volume": config["assistente"]["volume"] = float(v) / 100.0
             if k == "idioma": config["assistente"]["idioma"] = v
             if k == "modo_headless": config["browser"]["modo_headless"] = (v == "True")
+            if k == "talker_ativo": config["assistente"]["talker_ativo"] = (v == "True")
 
         # 3. Inicializar Componentes
         self.speaker = ElevenSpeaker(config["assistente"])
@@ -76,6 +77,16 @@ class NetEye:
 
         if br:
             def navegar(url):
+                # Verificar se o site está na lista de bloqueios (Func 13)
+                bloqueios = db.listar_bloqueios(self.user_id)
+                url_lower = url.lower()
+                for b in bloqueios:
+                    domain = b.get("url", "").lower().strip()
+                    if domain and (domain in url_lower):
+                        console.print(f"[bold red]🚫 Site bloqueado: {url}[/bold red]")
+                        self.speaker.falar("Desculpa, esse site está na tua lista de sites bloqueados.")
+                        return {"sucesso": False, "erro": "site_bloqueado", "mensagem": "Este site está bloqueado pelas tuas definições."}
+
                 self.stats["visitas"] += 1
                 r = br.navegar(url)
                 if r.get("sucesso"):
@@ -138,6 +149,16 @@ class NetEye:
         }
         self.db.guardar_relatorio_sessao(self.user_id, relatorio)
         console.print(f"[bold yellow]Relatório de sessão guardado ({duracao}s).[/bold yellow]")
+
+        # Falar estatísticas ao encerrar (bloqueante para não interromper a fala)
+        minutos = duracao // 60
+        segundos = duracao % 60
+        tempo_str = f"{minutos} minutos e {segundos} segundos" if minutos > 0 else f"{segundos} segundos"
+        msg_stats = f"Sessão terminada. Usaste o NetEye por {tempo_str}. Executaste {self.stats['comandos']} comandos e visitaste {self.stats['visitas']} páginas."
+        try:
+            self.speaker.falar(msg_stats, nao_bloquear=False)
+        except Exception:
+            pass
 
         if self.listener: self.listener.parar()
         self.speaker.parar()

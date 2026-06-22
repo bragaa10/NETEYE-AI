@@ -71,7 +71,8 @@ class BrowserController:
             console.print(f"[dim]🌐 {url}[/dim]")
             self._page.goto(url, timeout=self.timeout, wait_until="commit")
             try: self._page.wait_for_load_state("domcontentloaded", timeout=4000)
-            except: pass
+            except Exception as e:
+                console.print(f"[dim red]Aviso wait_for_load_state: {e}[/dim red]")
             
             self._auto_resolver_interrupcoes()
             
@@ -85,7 +86,13 @@ class BrowserController:
                 "tem_login": tem_login
             }
         except Exception as e:
+            console.print(f"[red]Erro ao navegar: {e}[/red]")
             return {"sucesso": False, "url": url, "erro": str(e)[:80]}
+
+    def pesquisar_google(self, consulta: str) -> dict:
+        """Realiza uma pesquisa no Google e carrega a página de resultados."""
+        url = f"https://www.google.com/search?q={consulta.replace(' ', '+')}&hl=pt"
+        return self.navegar(url)
 
     def _verificar_login(self) -> bool:
         """Verifica se a página atual parece ser de login."""
@@ -100,7 +107,9 @@ class BrowserController:
                 return hasPassword && hasUser && hasKeywords;
             }""")
             return bool(res)
-        except: return False
+        except Exception as e:
+            console.print(f"[dim red]Erro ao verificar login: {e}[/dim red]")
+            return False
 
     # ------------------------------------------------------------------
     # MODO LEITURA (Func 4)
@@ -130,6 +139,7 @@ class BrowserController:
             }""")
             return conteudo[:5000] # Limite para não sobrecarregar a fala
         except Exception as e:
+            console.print(f"[red]Erro ao extrair conteúdo principal: {e}[/red]")
             return f"Erro ao extrair conteúdo: {e}"
 
     # ------------------------------------------------------------------
@@ -145,11 +155,96 @@ class BrowserController:
         return f"Estás no site {dominio}, na página intitulada: {titulo}."
 
     # ------------------------------------------------------------------
+    # HELPERS DE ACESSIBILIDADE ADICIONAIS (Melhoria Acessibilidade)
+    # ------------------------------------------------------------------
+
+    def obter_elementos_interativos(self) -> dict:
+        """Retorna um dicionário com os elementos interativos numerados da página atual (acessibilidade)."""
+        if not self._page: return {"erro": "browser não iniciado"}
+        try:
+            # Script JS para obter todos os links, botões e elementos com role=button visíveis
+            elementos = self._page.evaluate("""() => {
+                const interativos = Array.from(document.querySelectorAll('a, button, [role="button"], input[type="button"], input[type="submit"]'));
+                // Filtrar apenas elementos visíveis e com texto útil
+                const uteis = interativos.filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    const estilo = window.getComputedStyle(el);
+                    const visivel = rect.width > 0 && rect.height > 0 && estilo.display !== 'none' && estilo.visibility !== 'hidden' && estilo.opacity !== '0';
+                    const texto = el.innerText ? el.innerText.trim() : '';
+                    const ariaLabel = el.getAttribute('aria-label') ? el.getAttribute('aria-label').trim() : '';
+                    const placeholder = el.getAttribute('placeholder') ? el.getAttribute('placeholder').trim() : '';
+                    return visivel && (texto || ariaLabel || placeholder);
+                });
+                
+                return uteis.slice(0, 15).map((el, index) => {
+                    return {
+                         id: index + 1,
+                         tag: el.tagName.toLowerCase(),
+                         texto: el.innerText ? el.innerText.trim() : (el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim()
+                    };
+                });
+            }""")
+            
+            # Guardar temporariamente os elementos para clique rápido por ID
+            self._elementos_mapeados = {str(el["id"]): el["texto"] for el in elementos}
+            return {"elementos": elementos}
+        except Exception as e:
+            console.print(f"[red]Erro ao obter elementos interativos: {e}[/red]")
+            return {"erro": str(e)}
+
+    def ir_para_cabecalho(self, direcao: str) -> dict:
+        """Desloca a página para o cabeçalho seguinte ou anterior (acessibilidade)."""
+        if not self._page: return {"erro": "browser não iniciado"}
+        try:
+            resultado = self._page.evaluate("""(dir) => {
+                const headers = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(h => {
+                    const rect = h.getBoundingClientRect();
+                    const style = window.getComputedStyle(h);
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+                });
+                if (headers.length === 0) return false;
+                
+                let targetHeader = null;
+                if (dir === 'seguinte' || dir === 'baixo') {
+                    targetHeader = headers.find(h => h.getBoundingClientRect().top > 5);
+                } else {
+                    const reversedHeaders = [...headers].reverse();
+                    targetHeader = reversedHeaders.find(h => h.getBoundingClientRect().top < -5);
+                }
+                
+                if (targetHeader) {
+                    targetHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    return targetHeader.innerText || 'Cabeçalho';
+                }
+                return false;
+            }""", direcao)
+            
+            if resultado:
+                return {"sucesso": True, "cabecalho": resultado}
+            return {"sucesso": False, "erro": "Nenhum cabeçalho encontrado nessa direção"}
+        except Exception as e:
+            console.print(f"[red]Erro ao saltar cabeçalho: {e}[/red]")
+            return {"sucesso": False, "erro": str(e)}
+
+    # ------------------------------------------------------------------
     # INTERAÇÃO MELHORADA (Bug 3)
     # ------------------------------------------------------------------
 
     def clicar_elemento(self, texto: str) -> dict:
         if not self._page: return {"sucesso": False}
+        texto_limpo = texto.strip().lower()
+        
+        # Verificar se foi mapeado no obter_elementos_interativos por ID numérico
+        if hasattr(self, "_elementos_mapeados") and texto_limpo in self._elementos_mapeados:
+            texto = self._elementos_mapeados[texto_limpo]
+            
+        # Converter palavras numéricas comuns
+        mapa_num = {"um":"1", "dois":"2", "três":"3", "quatro":"4", "cinco":"5", "seis":"6", "sete":"7", "oito":"8", "nove":"9", "dez":"10"}
+        if texto_limpo in mapa_num:
+            num = mapa_num[texto_limpo]
+            if hasattr(self, "_elementos_mapeados") and num in self._elementos_mapeados:
+                texto = self._elementos_mapeados[num]
+
         seletores = [
             f"text='{texto}'", f"button:has-text('{texto}')", f"a:has-text('{texto}')",
             f"[aria-label*='{texto}' i]", f"[role='button']:has-text('{texto}')"
@@ -190,7 +285,9 @@ class BrowserController:
             try: self._page.wait_for_load_state("domcontentloaded", timeout=2000)
             except: pass
             return {"sucesso": True}
-        except: return {"sucesso": False}
+        except Exception as e:
+            console.print(f"[red]Erro ao pressionar Enter: {e}[/red]")
+            return {"sucesso": False}
 
     def tirar_screenshot(self) -> bytes | None:
         if not self._page: return None
@@ -198,7 +295,9 @@ class BrowserController:
             vp = self._page.viewport_size or {"width": 1280, "height": 720}
             return self._page.screenshot(type="jpeg", quality=50, 
                                         clip={"x": 0, "y": 0, "width": min(vp["width"], 800), "height": vp["height"]})
-        except: return None
+        except Exception as e:
+            console.print(f"[dim red]Erro tirar_screenshot: {e}[/dim red]")
+            return None
 
     # ------------------------------------------------------------------
     # INTERNO
@@ -206,14 +305,23 @@ class BrowserController:
 
     def _auto_resolver_interrupcoes(self):
         if not self._page: return
-        sequencias = ["Rejeitar tudo", "Reject all", "Fechar", "Close", "Aceitar tudo", "Accept all"]
-        for label in sequencias:
-            try:
-                el = self._page.locator(f"button:has-text('{label}'), a:has-text('{label}')").first
-                if el.is_visible(timeout=300):
-                    el.click(timeout=1000)
-                    time.sleep(0.3)
-            except: pass
+        # Otimizado: Combinar seletores para evitar loops de 300ms sequenciais
+        botoes = [
+            "button:has-text('Rejeitar tudo')", "a:has-text('Rejeitar tudo')",
+            "button:has-text('Reject all')", "a:has-text('Reject all')",
+            "button:has-text('Fechar')", "a:has-text('Fechar')",
+            "button:has-text('Close')", "a:has-text('Close')",
+            "button:has-text('Aceitar tudo')", "a:has-text('Aceitar tudo')",
+            "button:has-text('Accept all')", "a:has-text('Accept all')"
+        ]
+        seletor_combinado = ", ".join(botoes)
+        try:
+            el = self._page.locator(seletor_combinado).first
+            if el.is_visible(timeout=150):
+                el.click(timeout=1000)
+                time.sleep(0.1)
+        except Exception as e:
+            pass
 
     def _obter_titulo_rapido(self) -> str:
         try: return self._page.title()
@@ -236,5 +344,6 @@ class BrowserController:
             if len(els) > idx:
                 els[idx].click(timeout=3000)
                 return {"sucesso": True}
-        except: pass
+        except Exception as e:
+            pass
         return {"sucesso": False}

@@ -65,12 +65,55 @@ class Database:
             return -1
 
     # ------------------------------------------------------------------
-    # CONFIGURAÇÕES
+    # CONFIGURAÇÕES E CRIPTOGRAFIA
     # ------------------------------------------------------------------
+
+    def _encrypt(self, text: str) -> str:
+        if not text:
+            return ""
+        try:
+            import base64
+            import hashlib
+            from cryptography.fernet import Fernet
+            
+            skey = os.environ.get("SUPABASE_KEY", "neteye-fallback-secret-salt-12345")
+            hasher = hashlib.sha256()
+            hasher.update(skey.encode('utf-8'))
+            key = base64.urlsafe_b64encode(hasher.digest())
+            
+            f = Fernet(key)
+            return f.encrypt(text.encode('utf-8')).decode('utf-8')
+        except Exception as e:
+            console.print(f"[red]Erro ao encriptar texto: {e}[/red]")
+            return text
+
+    def _decrypt(self, text: str) -> str:
+        if not text:
+            return ""
+        if not text.startswith("gAAAAA"):
+            # Se não começar com o cabeçalho Fernet, é texto limpo
+            return text
+        try:
+            import base64
+            import hashlib
+            from cryptography.fernet import Fernet
+            
+            skey = os.environ.get("SUPABASE_KEY", "neteye-fallback-secret-salt-12345")
+            hasher = hashlib.sha256()
+            hasher.update(skey.encode('utf-8'))
+            key = base64.urlsafe_b64encode(hasher.digest())
+            
+            f = Fernet(key)
+            return f.decrypt(text.encode('utf-8')).decode('utf-8')
+        except Exception:
+            # Em caso de falha de decriptação, assume texto limpo
+            return text
 
     def guardar_configuracao(self, user_id: int, chave: str, valor: str) -> bool:
         if not self.client: return False
         try:
+            if chave == "api_key":
+                valor = self._encrypt(valor)
             data = {"user_id": user_id, "chave": chave, "valor": str(valor)}
             res = self.client.table("configuracoes").upsert(data, on_conflict="user_id,chave").execute()
             return True if res.data else False
@@ -82,7 +125,10 @@ class Database:
         if not self.client: return padrao
         try:
             res = self.client.table("configuracoes").select("valor").eq("user_id", user_id).eq("chave", chave).execute()
-            return res.data[0]["valor"] if res.data else padrao
+            val = res.data[0]["valor"] if res.data else padrao
+            if chave == "api_key":
+                val = self._decrypt(val)
+            return val
         except Exception:
             return padrao
 
@@ -90,7 +136,10 @@ class Database:
         if not self.client: return {}
         try:
             res = self.client.table("configuracoes").select("chave, valor").eq("user_id", user_id).execute()
-            return {row["chave"]: row["valor"] for row in res.data}
+            configs = {row["chave"]: row["valor"] for row in res.data}
+            if "api_key" in configs:
+                configs["api_key"] = self._decrypt(configs["api_key"])
+            return configs
         except Exception:
             return {}
 

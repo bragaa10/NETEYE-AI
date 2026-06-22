@@ -22,6 +22,7 @@ class Assistant:
         self.config = config
         self.client = anthropic.Anthropic(api_key=self.api_key) if self.api_key else None
         
+        self.talker_ativo = config.get("assistente", {}).get("talker_ativo", True)
         self._cb = {}
         self._talker = None
         self._get_screenshot = None
@@ -47,6 +48,13 @@ class Assistant:
 
     def registar_falar(self, func):
         self._falar_cb = func
+        # Inicializar o Talker quando tivermos o callback de falar
+        if getattr(self, "talker_ativo", True) and not self._talker:
+            try:
+                from core.talker import Talker
+                self._talker = Talker(func, self.api_key)
+            except Exception as e:
+                console.print(f"[red]Erro ao inicializar Talker: {e}[/red]")
 
     def atualizar_atalhos(self, lista_atalhos: list):
         """Atualiza o dicionário de atalhos locais."""
@@ -131,15 +139,17 @@ class Assistant:
                 "description": "Navega para um URL ou pesquisa rápida.",
                 "input_schema": {
                     "type": "object",
-                    "properties": {"url": {"type": "string"}}
+                    "properties": {"url": {"type": "string"}},
+                    "required": ["url"]
                 }
             },
             {
                 "name": "clicar",
-                "description": "Clica num elemento (botão, link, etc).",
+                "description": "Clica num elemento (botão, link, etc) especificado pelo texto ou seletor.",
                 "input_schema": {
                     "type": "object",
-                    "properties": {"texto": {"type": "string"}}
+                    "properties": {"texto": {"type": "string"}},
+                    "required": ["texto"]
                 }
             },
             {
@@ -160,31 +170,67 @@ class Assistant:
                     "properties": {
                         "tipo": {"type": "string", "enum": ["volume", "velocidade"]},
                         "delta": {"type": "number", "description": "Valor a somar/subtrair"}
-                    }
+                    },
+                    "required": ["tipo", "delta"]
                 }
             },
             {
                 "name": "limpar_historico",
                 "description": "Apaga o histórico de navegação (AÇÃO DESTRUTIVA).",
                 "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "escrever",
+                "description": "Escreve um determinado texto no campo de texto focado do browser.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"texto": {"type": "string"}},
+                    "required": ["texto"]
+                }
+            },
+            {
+                "name": "pressionar_enter",
+                "description": "Pressiona a tecla Enter no browser para enviar formulários ou pesquisas.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "pesquisar_google",
+                "description": "Efetua uma pesquisa rápida no Google por um determinado termo ou frase.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"termo": {"type": "string"}},
+                    "required": ["termo"]
+                }
             }
         ]
 
         # Início do Loop de 5 iterações
         for i in range(5):
-            res = self.client.messages.create(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=1024,
-                system=system_prompt,
-                messages=hist,
-                tools=tools
-            )
+            # Iniciar o Talker antes do pedido ao Claude
+            if self._talker:
+                self._talker.iniciar_comando("default")
+
+            try:
+                res = self.client.messages.create(
+                    model="claude-3-5-sonnet-20240620",
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=hist,
+                    tools=tools
+                )
+            finally:
+                # Parar o Talker assim que a API responder
+                if self._talker:
+                    self._talker.parar()
 
             texto = ""
-            for block in res.content:
-                if block.type == "text":
-                    texto += block.text
-                elif block.type == "tool_use":
+            tool_calls = [block for block in res.content if block.type == "tool_use"]
+
+            if tool_calls:
+                hist.append({"role": "assistant", "content": res.content})
+                
+                tool_results = []
+                for block in tool_calls:
                     # Verificar se é ação destrutiva (Func 3)
                     if block.name == "limpar_historico":
                         self._pendente_confirmacao = (block.name, {}, "Tens a certeza que queres apagar todo o teu histórico?")
@@ -192,25 +238,33 @@ class Assistant:
                         self._falar(msg)
                         return msg
 
-                    # Execução Normal
+                    # Iniciar o Talker antes da execução da ferramenta
+                    if self._talker:
+                        self._talker.iniciar_comando(block.name)
+
                     console.print(f"[yellow]🛠 Tool: {block.name}({block.input})[/yellow]")
                     resultado = self._exec(block.name, block.input)
+
+                    # Parar o Talker após execução da ferramenta
+                    if self._talker:
+                        self._talker.parar()
                     
-                    hist.append({"role": "assistant", "content": res.content})
-                    hist.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": json.dumps(resultado)
-                            }
-                        ]
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(resultado)
                     })
-                    break # Re-invocar Claude com resultado
+
+                hist.append({
+                    "role": "user",
+                    "content": tool_results
+                })
+                continue # Re-invoca Claude com os resultados obtidos
             else:
-                # Se saiu do loop sem break (sem tool_use), a resposta é final
-                if texto: self._falar(texto)
+                # Se não houver chamadas de ferramentas, a resposta é final
+                texto = "".join([block.text for block in res.content if block.type == "text"])
+                if texto:
+                    self._falar(texto)
                 return texto
 
         return "Não consegui terminar, tenta um pedido mais simples."
@@ -221,10 +275,8 @@ class Assistant:
 
     def _exec(self, nome: str, params: dict) -> dict:
         if nome not in self._cb: return {"erro": "ferramenta indisponível"}
-        
-        # Bug 7: Verificação de bloqueios (já implementada na fase anterior)
-        # [Adicionada lógica de bloqueios aqui se necessário...]
-
+        if params is None:
+            params = {}
         try:
             return self._cb[nome](**params)
         except Exception as e:

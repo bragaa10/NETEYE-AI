@@ -15,8 +15,8 @@ import customtkinter as ctk
 from PIL import Image
 
 # Configuração do Repositório (Altera para o teu!)
-REPO_OWNER = "TEU_UTILIZADOR"
-REPO_NAME = "NetEyeAI"
+REPO_OWNER = "bragaa10"
+REPO_NAME = "NETEYE-AI"
 ASSET_NAME = "NetEyeAI.zip"
 
 # Cores Design System
@@ -24,9 +24,9 @@ BG        = "#0a0f1d"
 SURFACE   = "#111827"
 SURFACE_2 = "#1f2937"
 ACCENT    = "#3b82f6"
-TEXT_1    = "#f9fafb"
-TEXT_2    = "#d1d5db"
-TEXT_3    = "#9ca3af"
+TEXT_1    = "#ffffff"
+TEXT_2    = "#ffffff"
+TEXT_3    = "#ffffff"
 
 class NetEyeInstaller(ctk.CTk):
     def __init__(self):
@@ -41,6 +41,7 @@ class NetEyeInstaller(ctk.CTk):
         self.install_path = os.path.join(os.environ["LOCALAPPDATA"], "NetEyeAI")
         self.current_step = 1
         self.launch_after = tk.BooleanVar(value=True)
+        self.create_shortcut = tk.BooleanVar(value=True)
         self.download_url = None
         
         # Carregar Logo e Ícone
@@ -62,7 +63,7 @@ class NetEyeInstaller(ctk.CTk):
         self.side_panel.pack(side="left", fill="y")
         if self.logo_img:
             ctk.CTkLabel(self.side_panel, image=self.logo_img, text="").pack(pady=(50, 20))
-        ctk.CTkLabel(self.side_panel, text="NetEyeAI", font=("Segoe UI", 24, "bold"), text_color=ACCENT).pack()
+        ctk.CTkLabel(self.side_panel, text="NetEyeAI", font=("Segoe UI", 24, "bold"), text_color="#ffffff").pack()
         ctk.CTkLabel(self.side_panel, text="PAP 2025-26", font=("Segoe UI", 12), text_color=TEXT_3).pack(pady=5)
         self.status_dot = ctk.CTkLabel(self.side_panel, text="● Pronto", text_color="#10b981", font=("Segoe UI", 11))
         self.status_dot.pack(side="bottom", pady=20)
@@ -101,12 +102,11 @@ class NetEyeInstaller(ctk.CTk):
         reqs = [
             ("🌐 Ligação", "Necessária para descarregar o pacote de ~400MB."),
             ("🎙️ Microfone", "Deve estar ligado para comandos de voz."),
-            ("💾 Espaço", "Espaço livre necessário em C:\\ ou pasta escolhida."),
-            ("🔑 API Key", "Prepara a tua chave Anthropic para o primeiro uso.")
+            ("💾 Espaço", "Espaço livre necessário em C:\\ ou pasta escolhida.")
         ]
         for icon, txt in reqs:
             f = ctk.CTkFrame(self.content_frame, fg_color="transparent"); f.pack(fill="x", pady=8)
-            ctk.CTkLabel(f, text=icon, font=("Segoe UI", 14, "bold"), text_color=ACCENT, width=100, anchor="w").pack(side="left")
+            ctk.CTkLabel(f, text=icon, font=("Segoe UI", 14, "bold"), text_color="#ffffff", width=100, anchor="w").pack(side="left")
             ctk.CTkLabel(f, text=txt, font=("Segoe UI", 13), text_color=TEXT_2).pack(side="left")
 
     def _step_path(self):
@@ -114,18 +114,22 @@ class NetEyeInstaller(ctk.CTk):
         self.path_entry = ctk.CTkEntry(self.content_frame, fg_color=SURFACE_2, border_color=ACCENT, height=40)
         self.path_entry.pack(fill="x", pady=10)
         self.path_entry.insert(0, self.install_path)
-        ctk.CTkButton(self.content_frame, text="📁 Alterar Pasta", fg_color=SURFACE_2, command=self._browse_path).pack(anchor="e")
+        ctk.CTkButton(self.content_frame, text="📁 Alterar Pasta", fg_color=SURFACE_2, command=self._browse_path).pack(anchor="e", pady=(0, 20))
+        
+        # Checkbox para atalho opcional
+        ctk.CTkCheckBox(self.content_frame, text="Criar atalho no Ambiente de Trabalho (Área de Trabalho)", variable=self.create_shortcut, fg_color=ACCENT).pack(anchor="w", pady=10)
 
     def _step_summary(self):
         ctk.CTkLabel(self.content_frame, text="Resumo da Instalação", font=("Segoe UI", 22, "bold"), text_color=TEXT_1, anchor="w").pack(fill="x")
-        summary = f"Tipo: Instalação Web (Auto-Download)\nDestino: {self.install_path}\nAtalho: Criar no Ambiente de Trabalho"
+        atalho_str = "Sim" if self.create_shortcut.get() else "Não"
+        summary = f"Tipo: Instalação Web (Auto-Download)\nDestino: {self.install_path}\nAtalho no Desktop: {atalho_str}"
         box = ctk.CTkFrame(self.content_frame, fg_color=SURFACE_2, corner_radius=10); box.pack(fill="both", expand=True, pady=20)
         ctk.CTkLabel(box, text=summary, font=("Segoe UI", 13), text_color=TEXT_2, justify="left", padx=20, pady=20).pack(anchor="nw")
         self.btn_next.configure(text="Instalar", fg_color="#10b981", hover_color="#059669")
 
     def _step_install(self):
         self.btn_next.configure(state="disabled"); self.btn_prev.configure(state="disabled")
-        self.status_dot.configure(text="● A Descarregar", text_color="#f59e0b")
+        self.status_dot.configure(text="● A Descarregar", text_color="#ffffff")
         ctk.CTkLabel(self.content_frame, text="A Descarregar e Instalar", font=("Segoe UI", 22, "bold"), text_color=TEXT_1, anchor="w").pack(fill="x")
         self.progress_bar = ctk.CTkProgressBar(self.content_frame, height=12, fg_color=SURFACE_2, progress_color=ACCENT); self.progress_bar.pack(fill="x", pady=(40, 10)); self.progress_bar.set(0)
         self.pct_lbl = ctk.CTkLabel(self.content_frame, text="0%", font=("Segoe UI", 16, "bold"), text_color=TEXT_1); self.pct_lbl.pack()
@@ -134,7 +138,7 @@ class NetEyeInstaller(ctk.CTk):
 
     def _step_finish(self):
         self.status_dot.configure(text="● Concluído", text_color="#10b981")
-        ctk.CTkLabel(self.content_frame, text="Pronto para usar!", font=("Segoe UI", 28, "bold"), text_color="#10b981", anchor="w").pack(fill="x")
+        ctk.CTkLabel(self.content_frame, text="Pronto para usar!", font=("Segoe UI", 28, "bold"), text_color="#ffffff", anchor="w").pack(fill="x")
         ctk.CTkLabel(self.content_frame, text="O NetEyeAI foi instalado com sucesso.", font=("Segoe UI", 14), text_color=TEXT_2, anchor="w").pack(fill="x", pady=20)
         ctk.CTkCheckBox(self.content_frame, text="Abrir NetEyeAI agora", variable=self.launch_after, fg_color=ACCENT).pack(anchor="w", pady=20)
         self.btn_next.configure(text="Concluir", state="normal", command=self._finish_all, fg_color=ACCENT)
@@ -174,12 +178,27 @@ class NetEyeInstaller(ctk.CTk):
                 zip_ref.extractall(target)
             os.remove(zip_path)
 
-            # 4. Atalho
-            self.after(0, lambda: self.status_lbl.configure(text="A criar atalho..."))
-            exe = os.path.join(target, "NetEyeAI.exe")
-            lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
-            ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{exe}';$s.WorkingDirectory='{target}';$s.IconLocation='{exe},0';$s.Save()"
-            subprocess.run(["powershell", "-Command", ps], capture_output=True)
+            # 4. Instalar Requisitos (requirements.txt)
+            self.after(0, lambda: self.status_lbl.configure(text="A instalar dependências (requirements.txt)..."))
+            req_file = os.path.join(target, "requirements.txt")
+            if os.path.exists(req_file):
+                # Executar pip install usando o executável python atual de forma silenciosa
+                subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, capture_output=True)
+
+            # 5. Atalho
+            if self.create_shortcut.get():
+                self.after(0, lambda: self.status_lbl.configure(text="A criar atalho na Área de Trabalho..."))
+                exe = os.path.join(target, "NetEyeAI.exe")
+                # Se NetEyeAI.exe não existir, criamos o atalho para run_gui.py usando o python atual
+                if not os.path.exists(exe):
+                    py_exe = sys.executable
+                    script_path = os.path.join(target, "run_gui.py")
+                    lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
+                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{py_exe}';$s.Arguments='\"{script_path}\"';$s.WorkingDirectory='{target}';$s.IconLocation='{os.path.join(target, 'static', 'logo.ico')},0';$s.Save()"
+                else:
+                    lnk = os.environ["USERPROFILE"] + r"\Desktop\NetEyeAI.lnk"
+                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{exe}';$s.WorkingDirectory='{target}';$s.IconLocation='{exe},0';$s.Save()"
+                subprocess.run(["powershell", "-Command", ps], capture_output=True)
 
             self.after(500, lambda: self._show_step(6))
         except Exception as e:

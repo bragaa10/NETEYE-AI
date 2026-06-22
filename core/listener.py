@@ -78,6 +78,15 @@ class Listener:
             self._stream.stop()
             self._stream.close()
 
+    def _get_vad_bytes(self, frame) -> bytes:
+        frame_bytes = frame.tobytes()
+        expected_len = self.frame_size * 2
+        if len(frame_bytes) < expected_len:
+            frame_bytes = frame_bytes.ljust(expected_len, b'\x00')
+        elif len(frame_bytes) > expected_len:
+            frame_bytes = frame_bytes[:expected_len]
+        return frame_bytes
+
     def ouvir_comando(self, speaker=None) -> str | None:
         """
         Bloqueia até detetar wake word e depois uma fala completa.
@@ -105,11 +114,36 @@ class Listener:
             except queue.Empty:
                 continue
 
-            # Bug 2: Echo Prevention
+            # Echo Prevention com suporte a interrupção por voz
             if speaker and speaker.esta_a_falar():
+                # Verificar se o utilizador está a tentar interromper (voz forte e contínua)
+                try:
+                    frame_bytes = self._get_vad_bytes(frame)
+                    tem_voz_forte = self.vad.is_speech(frame_bytes, self.SAMPLE_RATE)
+                except Exception:
+                    tem_voz_forte = False
+                
+                if tem_voz_forte:
+                    # Contar frames consecutivos de voz durante a fala do speaker
+                    if not hasattr(self, '_interrupt_count'):
+                        self._interrupt_count = 0
+                    self._interrupt_count += 1
+                    
+                    # Se detetados 5+ frames consecutivos de voz (~150ms), interromper o speaker
+                    if self._interrupt_count >= 5:
+                        console.print("[bold yellow]⚡ Interrupção detetada — a silenciar speaker.[/bold yellow]")
+                        speaker.parar()
+                        self._interrupt_count = 0
+                        a_gravar = False
+                        frames_voz.clear()
+                        inicio_idle = time.time()
+                        continue
+                else:
+                    self._interrupt_count = 0
+                
+                # Se não interrompeu, descartar frame (eco do speaker)
                 a_gravar = False
                 frames_voz.clear()
-                time.sleep(0.4) 
                 inicio_idle = time.time()
                 continue
 
@@ -135,7 +169,8 @@ class Listener:
 
             # --- FASE 2: GRAVAR COMANDO (VAD) ---
             try:
-                tem_voz = self.vad.is_speech(frame.tobytes(), self.SAMPLE_RATE)
+                frame_bytes = self._get_vad_bytes(frame)
+                tem_voz = self.vad.is_speech(frame_bytes, self.SAMPLE_RATE)
             except Exception:
                 tem_voz = False
 

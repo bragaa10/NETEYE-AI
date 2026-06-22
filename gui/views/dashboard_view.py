@@ -238,7 +238,7 @@ class DashboardView(ctk.CTkFrame):
             self._start_assistant()
 
     def _start_assistant(self):
-        api_key = self.db.obter_configuracao(self.user_id, "api_key")
+        api_key = self.db.obter_configuracao(self.user_id, "api_key") or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key or not api_key.strip():
             self.terminal.error("Configure a chave API em Configurações primeiro.")
             return
@@ -253,7 +253,7 @@ class DashboardView(ctk.CTkFrame):
             run_gui_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "run_gui.py")
             cmd = [sys.executable, run_gui_path]
 
-        cmd += ["--chave-api", api_key, "--user-id", str(self.user_id)]
+        cmd += ["--assistant", "--user-id", str(self.user_id)]
         if headless:
             cmd.append("--headless")
 
@@ -261,7 +261,7 @@ class DashboardView(ctk.CTkFrame):
             self._process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", bufsize=1,
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+                env={**os.environ, "PYTHONIOENCODING": "utf-8", "ANTHROPIC_API_KEY": api_key}
             )
             self.btn_toggle.configure(text="■  Parar NetEye", fg_color="#8b1a1a", hover_color="#a52020")
             self.lbl_status_run.configure(text="⬤  Em execução", text_color=GREEN)

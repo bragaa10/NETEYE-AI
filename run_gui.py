@@ -11,7 +11,9 @@ import main as assistant_main
 
 if __name__ == "__main__":
     # Se houver argumentos de comando, age como o assistente (subprocesso)
-    if len(sys.argv) > 1 and "--chave-api" in sys.argv:
+    if len(sys.argv) > 1 and ("--assistant" in sys.argv or "--chave-api" in sys.argv):
+        if "--assistant" in sys.argv:
+            sys.argv.remove("--assistant")
         assistant_main.main()
     else:
         # Caso contrário, abre a interface gráfica
