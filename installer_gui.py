@@ -4,6 +4,17 @@ Versão Bootstrapper que descarrega a última versão do GitHub.
 """
 import os
 import sys
+# Configurar codificação UTF-8 para consola para evitar erros com emojis no Windows (cp1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 import shutil
 import threading
 import subprocess
@@ -13,6 +24,67 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
+
+def find_python_and_pythonw():
+    """
+    Tenta localizar de forma robusta os executáveis python.exe e pythonw.exe.
+    Retorna um par (python_path, pythonw_path).
+    """
+    import sys
+    import os
+    import shutil
+
+    # 1. Verificar se o sys.executable atual é um interpretador de python
+    executable = sys.executable
+    if executable and "python" in os.path.basename(executable).lower() and ("python.exe" in executable.lower() or "pythonw.exe" in executable.lower()):
+        py = executable
+        pyw = executable.lower().replace("python.exe", "pythonw.exe")
+        if os.path.exists(pyw):
+            return py, pyw
+        return py, py
+
+    # 2. Procurar no PATH do sistema usando shutil.which
+    py = shutil.which("python")
+    pyw = shutil.which("pythonw")
+    if py and pyw:
+        return py, pyw
+    if py:
+        pyw_infer = py.lower().replace("python.exe", "pythonw.exe")
+        if os.path.exists(pyw_infer):
+            return py, pyw_infer
+        return py, py
+
+    # 3. Procurar em diretórios padrão do Windows (Users\...\AppData\Local\Programs\Python ou Program Files)
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    program_files = os.environ.get("ProgramFiles", "")
+    system_drive = os.environ.get("SystemDrive", "C:")
+    
+    search_dirs = []
+    if local_appdata:
+        search_dirs.append(os.path.join(local_appdata, "Programs", "Python"))
+    if program_files:
+        search_dirs.append(os.path.join(program_files, "Python"))
+    search_dirs.append(os.path.join(system_drive, "\\"))
+    
+    for base_dir in search_dirs:
+        if not os.path.exists(base_dir):
+            continue
+        try:
+            for item in os.listdir(base_dir):
+                if item.lower().startswith("python"):
+                    sub_path = os.path.join(base_dir, item)
+                    if os.path.isdir(sub_path):
+                        py_cand = os.path.join(sub_path, "python.exe")
+                        pyw_cand = os.path.join(sub_path, "pythonw.exe")
+                        if os.path.exists(py_cand):
+                            if os.path.exists(pyw_cand):
+                                return py_cand, pyw_cand
+                            return py_cand, py_cand
+        except Exception:
+            pass
+
+    # 4. Fallback absoluto
+    return "python", "pythonw"
 
 # Configuração do Repositório (Altera para o teu!)
 REPO_OWNER = "bragaa10"
@@ -27,6 +99,9 @@ ACCENT    = "#3b82f6"
 TEXT_1    = "#ffffff"
 TEXT_2    = "#ffffff"
 TEXT_3    = "#ffffff"
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 class NetEyeInstaller(ctk.CTk):
     def __init__(self):
@@ -52,7 +127,7 @@ class NetEyeInstaller(ctk.CTk):
                 dark_image=Image.open("static/logo.png"),
                 size=(140, 140)
             )
-        except:
+        except Exception:
             self.logo_img = None
 
         self._build_ui()
@@ -111,13 +186,13 @@ class NetEyeInstaller(ctk.CTk):
 
     def _step_path(self):
         ctk.CTkLabel(self.content_frame, text="Destino da Instalação", font=("Segoe UI", 22, "bold"), text_color=TEXT_1, anchor="w").pack(fill="x")
-        self.path_entry = ctk.CTkEntry(self.content_frame, fg_color=SURFACE_2, border_color=ACCENT, height=40)
+        self.path_entry = ctk.CTkEntry(self.content_frame, fg_color=SURFACE_2, border_color=ACCENT, height=40, text_color="#ffffff")
         self.path_entry.pack(fill="x", pady=10)
         self.path_entry.insert(0, self.install_path)
         ctk.CTkButton(self.content_frame, text="📁 Alterar Pasta", fg_color=SURFACE_2, command=self._browse_path).pack(anchor="e", pady=(0, 20))
         
         # Checkbox para atalho opcional
-        ctk.CTkCheckBox(self.content_frame, text="Criar atalho no Ambiente de Trabalho (Área de Trabalho)", variable=self.create_shortcut, fg_color=ACCENT).pack(anchor="w", pady=10)
+        ctk.CTkCheckBox(self.content_frame, text="Criar atalho no Ambiente de Trabalho (Área de Trabalho)", variable=self.create_shortcut, fg_color=ACCENT, text_color="#ffffff").pack(anchor="w", pady=10)
 
     def _step_summary(self):
         ctk.CTkLabel(self.content_frame, text="Resumo da Instalação", font=("Segoe UI", 22, "bold"), text_color=TEXT_1, anchor="w").pack(fill="x")
@@ -140,7 +215,7 @@ class NetEyeInstaller(ctk.CTk):
         self.status_dot.configure(text="● Concluído", text_color="#10b981")
         ctk.CTkLabel(self.content_frame, text="Pronto para usar!", font=("Segoe UI", 28, "bold"), text_color="#ffffff", anchor="w").pack(fill="x")
         ctk.CTkLabel(self.content_frame, text="O NetEyeAI foi instalado com sucesso.", font=("Segoe UI", 14), text_color=TEXT_2, anchor="w").pack(fill="x", pady=20)
-        ctk.CTkCheckBox(self.content_frame, text="Abrir NetEyeAI agora", variable=self.launch_after, fg_color=ACCENT).pack(anchor="w", pady=20)
+        ctk.CTkCheckBox(self.content_frame, text="Abrir NetEyeAI agora", variable=self.launch_after, fg_color=ACCENT, text_color="#ffffff").pack(anchor="w", pady=20)
         self.btn_next.configure(text="Concluir", state="normal", command=self._finish_all, fg_color=ACCENT)
         self.btn_prev.pack_forget()
 
@@ -167,7 +242,8 @@ class NetEyeInstaller(ctk.CTk):
                 self.download_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/heads/main.zip"
 
             # 2. Download
-            zip_path = "temp_install.zip"
+            import tempfile
+            zip_path = os.path.join(tempfile.gettempdir(), "temp_install.zip")
             with requests.get(self.download_url, stream=True) as r:
                 r.raise_for_status()
                 total = int(r.headers.get('content-length', 0))
@@ -200,8 +276,16 @@ class NetEyeInstaller(ctk.CTk):
                 
             os.makedirs(target, exist_ok=True)
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # Proteção contra Zip Slip
+                for member in zip_ref.namelist():
+                    member_path = os.path.realpath(os.path.join(target, member))
+                    if not member_path.startswith(os.path.realpath(target)):
+                        raise Exception("Path traversal detectado no ZIP!")
                 zip_ref.extractall(target)
-            os.remove(zip_path)
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
 
             # Mover ficheiros se estiverem dentro de uma pasta aninhada (ex: NETEYE-AI-main)
             conteudo = os.listdir(target)
@@ -217,28 +301,65 @@ class NetEyeInstaller(ctk.CTk):
                 except Exception:
                     pass
 
+            # Criar o ficheiro .env com template de overrides (as credenciais reais vêm pré-empacotadas)
+            env_content = (
+                "# NetEye — Configurações Locais\n"
+                "# As credenciais de produção padrão já vêm embutidas no programa.\n"
+                "# Use as variáveis abaixo apenas se desejar substituir a BD ou chave de encriptação padrão:\n"
+                "# SUPABASE_URL=https://...\n"
+                "# SUPABASE_KEY=...\n"
+                "# NETEYE_ENCRYPTION_KEY=...\n"
+            )
+            with open(os.path.join(target, ".env"), "w", encoding="utf-8") as env_file:
+                env_file.write(env_content)
+
             # 4. Instalar Requisitos (requirements.txt)
             self.after(0, lambda: self.status_lbl.configure(text="A instalar dependências (requirements.txt)..."))
             req_file = os.path.join(target, "requirements.txt")
-            real_python = getattr(sys, '_base_executable', None) or sys.executable
+            real_python, pyw_exe = find_python_and_pythonw()
             if os.path.exists(req_file):
-                # Executar pip install usando o executável python real de forma silenciosa
-                subprocess.run([real_python, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, capture_output=True)
+                # Executar pip install usando o executável python real
+                res_pip = subprocess.run([real_python, "-m", "pip", "install", "-r", "requirements.txt"], cwd=target, text=True, capture_output=True)
+                if res_pip.returncode != 0:
+                    raise Exception(f"Falha ao instalar dependências: {res_pip.stderr}")
+
+            # Instalar Chromium via Playwright
+            self.after(0, lambda: self.status_lbl.configure(text="A instalar browser Chromium (Playwright)..."))
+            res_pw = subprocess.run([real_python, "-m", "playwright", "install", "chromium"], cwd=target, text=True, capture_output=True)
+            if res_pw.returncode != 0:
+                raise Exception(f"Falha ao instalar browser Chromium: {res_pw.stderr}")
 
             # 5. Atalho
             if self.create_shortcut.get():
                 self.after(0, lambda: self.status_lbl.configure(text="A criar atalho na Área de Trabalho..."))
                 exe = os.path.join(target, "NetEyeAI.exe")
-                # Se NetEyeAI.exe não existir, criamos o atalho para run_gui.py usando o pythonw.exe
+                
+                # Obter path real do Desktop (independente do idioma do Windows ou OneDrive)
+                import winreg
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+                    desktop_path = winreg.QueryValueEx(key, "Desktop")[0]
+                    desktop_path = os.path.expandvars(desktop_path)
+                except Exception:
+                    desktop_path = os.path.join(os.environ["USERPROFILE"], "Desktop")
+                
+                lnk = os.path.join(desktop_path, "NetEyeAI.lnk")
+                icon_path = os.path.join(target, "static", "logo.ico")
+                
+                # Escapar aspas simples para PowerShell
+                lnk_escaped = lnk.replace("'", "''")
+                pyw_exe_escaped = pyw_exe.replace("'", "''")
+                target_escaped = target.replace("'", "''")
+                icon_path_escaped = icon_path.replace("'", "''")
+                
                 if not os.path.exists(exe):
-                    pyw_exe = real_python.lower().replace("python.exe", "pythonw.exe")
-                    if not os.path.exists(pyw_exe):
-                        pyw_exe = real_python
                     script_path = os.path.join(target, "run_gui.py")
-                    lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
-                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}');$s.TargetPath='{pyw_exe}';$s.Arguments='\"{script_path}\"';$s.WorkingDirectory='{target}';$s.IconLocation='{os.path.join(target, 'static', 'logo.ico')},0';$s.Save()"
+                    script_path_escaped = script_path.replace("'", "''")
+                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk_escaped}');$s.TargetPath='{pyw_exe_escaped}';$s.Arguments='\"{script_path_escaped}\"';$s.WorkingDirectory='{target_escaped}';$s.IconLocation='{icon_path_escaped},0';$s.Save()"
                 else:
-                    lnk = os.path.join(os.environ["USERPROFILE"], "Desktop", "NetEyeAI.lnk")
+                    exe_escaped = exe.replace("'", "''")
+                    ps = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk_escaped}');$s.TargetPath='{exe_escaped}';$s.WorkingDirectory='{target_escaped}';$s.IconLocation='{icon_path_escaped},0';$s.Save()"
+                
                 subprocess.run(["powershell", "-Command", ps], capture_output=True)
 
             self.after(500, lambda: self._show_step(6))
@@ -275,10 +396,7 @@ class NetEyeInstaller(ctk.CTk):
             if os.path.exists(exe):
                 subprocess.Popen([exe], cwd=self.install_path, shell=True)
             else:
-                real_python = getattr(sys, '_base_executable', None) or sys.executable
-                pyw_exe = real_python.lower().replace("python.exe", "pythonw.exe")
-                if not os.path.exists(pyw_exe):
-                    pyw_exe = real_python
+                real_python, pyw_exe = find_python_and_pythonw()
                 script_path = os.path.join(self.install_path, "run_gui.py")
                 subprocess.Popen([pyw_exe, script_path], cwd=self.install_path)
         self.destroy()

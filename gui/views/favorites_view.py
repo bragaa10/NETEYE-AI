@@ -115,7 +115,11 @@ class FavoritesView(ctk.CTkFrame):
         sel = self.tree.selection()
         if not sel:
             return
-        fav_id = int(sel[0])
+        # FIX: Proteger contra IDs de placeholder não numéricos (ex: 'I001')
+        raw_id = sel[0]
+        if not raw_id.isdigit():
+            return
+        fav_id = int(raw_id)
         if messagebox.askyesno("Eliminar", "Tem a certeza que quer eliminar este favorito?"):
             self.db.remover_favorito_por_id(self.user_id, fav_id)
             self.refresh()

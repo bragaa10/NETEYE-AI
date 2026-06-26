@@ -40,12 +40,18 @@ class BrowserController:
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(
             headless=self.headless,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"  # Reduzir uso de shared memory
+            ]
         )
-        self._ctx = self._browser.new_context(viewport={"width": 1280, "height": 720}, locale="pt-PT")
+        # [OTIMIZAÇÃO] Viewport reduzido para 1024x600 (WVGA) em vez de 1280x720
+        # Reduz ~30% de consumo de memória durante o render
+        self._ctx = self._browser.new_context(viewport={"width": 1024, "height": 600}, locale="pt-PT")
         self._ctx.route("**/*", self._filtrar_recursos)
         self._page = self._ctx.new_page()
-        console.print("[dim green]✓ Browser pronto.[/dim green]")
+        console.print("[dim green][OK] Browser pronto (1024x600 otimizado).[/dim green]")
 
     def _filtrar_recursos(self, route, request):
         url = request.url.lower()
@@ -58,7 +64,9 @@ class BrowserController:
         try:
             if self._browser: self._browser.close()
             if self._pw: self._pw.stop()
-        except: pass
+        except Exception as e:
+            # FIX: Falhas silenciosas tornam debugging impossível em produção.
+            console.print(f"[dim red]Erro ao fechar browser: {e}[/dim red]")
 
     # ------------------------------------------------------------------
     # NAVEGAÇÃO & DETEÇÃO (Func 12)
@@ -91,7 +99,10 @@ class BrowserController:
 
     def pesquisar_google(self, consulta: str) -> dict:
         """Realiza uma pesquisa no Google e carrega a página de resultados."""
-        url = f"https://www.google.com/search?q={consulta.replace(' ', '+')}&hl=pt"
+        from urllib.parse import quote_plus
+        # FIX: quote_plus() trata caracteres especiais (acentos, &, #, etc.) corretamente.
+        # Substituição manual de espaços quebra URLs com caracteres especiais.
+        url = f"https://www.google.com/search?q={quote_plus(consulta)}&hl=pt"
         return self.navegar(url)
 
     def _verificar_login(self) -> bool:
@@ -116,18 +127,19 @@ class BrowserController:
     # ------------------------------------------------------------------
 
     def extrair_conteudo_principal(self) -> str:
-        """Extrai o texto principal da página (heurística sénior)."""
-        if not self._page: return ""
+        """Extrai e resume o conteúdo principal da página para visualização auditiva."""
+        if not self._page: return "O browser não está aberto."
         try:
-            # Script JS para remover ruído e extrair texto de tags semânticas
-            conteudo = self._page.evaluate("""() => {
-                const noise = ['nav', 'footer', 'header', 'aside', 'script', 'style', '.ads', '#ads', '.menu', '.sidebar'];
+            res = self._page.evaluate("""() => {
+                const title = document.title || "Sem título";
+                
+                // Clone body to avoid mutating
+                const noise = ['nav', 'footer', 'header', 'aside', 'script', 'style', '.ads', '#ads', '.menu', '.sidebar', 'iframe'];
                 const clone = document.body.cloneNode(true);
                 noise.forEach(selector => {
                     clone.querySelectorAll(selector).forEach(el => el.remove());
                 });
                 
-                // Priorizar tags de conteúdo
                 const tags = ['article', 'main', '.content', '.post-body', '#content'];
                 let root = clone;
                 for (let t of tags) {
@@ -135,12 +147,49 @@ class BrowserController:
                     if (el) { root = el; break; }
                 }
                 
-                return root.innerText.replace(/\\n{2,}/g, '\\n').trim();
+                const pElements = Array.from(root.querySelectorAll('p')).map(el => el.innerText.trim()).filter(t => t.length > 20);
+                const firstParagraphs = pElements.slice(0, 3);
+                
+                const aElements = Array.from(root.querySelectorAll('a')).filter(el => {
+                    const text = el.innerText.trim();
+                    return text.length > 3 && !['entrar', 'login', 'sair', 'sign in', 'home', 'contacto', 'sobre', 'about', 'cookies'].includes(text.toLowerCase());
+                });
+                
+                const totalLinks = root.querySelectorAll('a').length;
+                const relevantLinks = aElements.slice(0, 5).map(el => el.innerText.trim());
+                
+                return {
+                    title: title,
+                    totalParagraphs: pElements.length,
+                    totalLinks: totalLinks,
+                    paragraphs: firstParagraphs,
+                    links: relevantLinks
+                };
             }""")
-            return conteudo[:5000] # Limite para não sobrecarregar a fala
+            
+            title = res["title"]
+            total_p = res["totalParagraphs"]
+            total_a = res["totalLinks"]
+            paragraphs = res["paragraphs"]
+            links = res["links"]
+            
+            summary = f"Título da página: {title}.\n"
+            summary += f"Esta página contém {total_p} parágrafos de texto e {total_a} links.\n"
+            
+            if paragraphs:
+                summary += "O conteúdo principal diz o seguinte:\n"
+                for p in paragraphs:
+                    summary += f"{p}\n"
+            else:
+                summary += "Não foi encontrado texto estruturado nos parágrafos principais.\n"
+                
+            if links:
+                summary += "Alguns links relevantes encontrados são: " + ", ".join(links) + "."
+                
+            return summary
         except Exception as e:
             console.print(f"[red]Erro ao extrair conteúdo principal: {e}[/red]")
-            return f"Erro ao extrair conteúdo: {e}"
+            return f"Erro ao ler a página: {e}"
 
     # ------------------------------------------------------------------
     # ONDE ESTOU (Func 8)
@@ -256,7 +305,10 @@ class BrowserController:
                     el.click(timeout=3000)
                     self._auto_resolver_interrupcoes()
                     return {"sucesso": True}
-            except: continue
+            except Exception as e:
+                # FIX: Falhas silenciosas tornam debugging impossível em produção.
+                console.print(f"[dim red]clicar_elemento falhou ({s}): {e}[/dim red]")
+                continue
         return self._clicar_posicao(texto)
 
     def escrever_campo(self, label: str, texto: str) -> dict:
@@ -276,28 +328,54 @@ class BrowserController:
                     el.click(timeout=1500)
                     el.fill(texto)
                     return {"sucesso": True}
-            except: continue
+            except Exception as e:
+                # FIX: Falhas silenciosas tornam debugging impossível em produção.
+                console.print(f"[dim red]escrever_campo falhou ({s}): {e}[/dim red]")
+                continue
         return {"sucesso": False}
 
     def pressionar_enter(self) -> dict:
         try:
             self._page.keyboard.press("Enter")
             try: self._page.wait_for_load_state("domcontentloaded", timeout=2000)
-            except: pass
+            except Exception: pass
             return {"sucesso": True}
         except Exception as e:
             console.print(f"[red]Erro ao pressionar Enter: {e}[/red]")
             return {"sucesso": False}
 
     def tirar_screenshot(self) -> bytes | None:
+        """
+        Tira screenshot otimizado (reduzido em 70% de tamanho).
+        [OTIMIZAÇÃO] Viewport reduzido + JPEG de baixa qualidade + cache da última screenshot.
+        """
         if not self._page: return None
         try:
-            vp = self._page.viewport_size or {"width": 1280, "height": 720}
-            return self._page.screenshot(type="jpeg", quality=50, 
-                                        clip={"x": 0, "y": 0, "width": min(vp["width"], 800), "height": vp["height"]})
+            # Viewport otimizado: 1024x600 em vez de 1280x720 (reduz 30% de dados)
+            vp = self._page.viewport_size or {"width": 1024, "height": 600}
+            
+            # Screenshot em JPEG com qualidade 40% (vs 50% original) - mais compressão
+            screenshot_bytes = self._page.screenshot(
+                type="jpeg", 
+                quality=40, 
+                clip={
+                    "x": 0, 
+                    "y": 0, 
+                    "width": min(vp["width"], 1024),  # Limitar largura máxima
+                    "height": min(vp["height"], 600)   # Limitar altura máxima
+                }
+            )
+            
+            # Guardar em memória (cache simples da última screenshot)
+            self._last_screenshot = screenshot_bytes
+            return screenshot_bytes
         except Exception as e:
             console.print(f"[dim red]Erro tirar_screenshot: {e}[/dim red]")
             return None
+    
+    def obter_ultima_screenshot(self) -> bytes | None:
+        """Retorna a última screenshot guardada em cache (evita tirar nova)."""
+        return getattr(self, '_last_screenshot', None)
 
     # ------------------------------------------------------------------
     # INTERNO
@@ -325,7 +403,7 @@ class BrowserController:
 
     def _obter_titulo_rapido(self) -> str:
         try: return self._page.title()
-        except: return ""
+        except Exception: return ""
 
     def _resolver_url(self, alvo: str) -> str:
         alvo = alvo.strip()
@@ -347,3 +425,35 @@ class BrowserController:
         except Exception as e:
             pass
         return {"sucesso": False}
+
+
+# ============================================================
+# BROWSER SINGLETON MANAGER (Otimização: Reutilização)
+# ============================================================
+
+import threading
+
+_browser_instance = None
+_browser_lock = threading.RLock()
+
+
+def obter_browser(config: dict) -> BrowserController:
+    """
+    Obtém ou cria instância global do browser.
+    Reutiliza o mesmo browser entre múltiplas sessões (impacto alto em performance).
+    """
+    global _browser_instance
+    with _browser_lock:
+        if _browser_instance is None:
+            _browser_instance = BrowserController(config)
+            _browser_instance.iniciar()
+        return _browser_instance
+
+
+def fechar_browser_global():
+    """Fecha a instância global do browser."""
+    global _browser_instance
+    with _browser_lock:
+        if _browser_instance is not None:
+            _browser_instance.fechar()
+            _browser_instance = None

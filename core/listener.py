@@ -40,6 +40,8 @@ class Listener:
         self.silencio_max = config.get("silencio_para_processar", 0.8)   
         self.min_fala = config.get("tempo_minimo_fala", 0.3)             
         self.usar_wake_word = config.get("usar_wake_word", True)
+        self.interromper_ao_falar = config.get("interromper_ao_falar", True)
+        self._interrupt_count = 0  # FIX: Estado persistente entre chamadas. Inicializar aqui em vez de dentro do loop.
 
         self.frame_size = int(self.SAMPLE_RATE * self.FRAME_DURATION / 1000)
 
@@ -54,8 +56,8 @@ class Listener:
         if self.usar_wake_word and WAKEPWORD_AVAILABLE:
             try:
                 # Carregar modelos padrão (ou específicos se fornecidos)
-                self.ww_model = Model(wakeword_models=["hey_neteye", "alexa"], inference_framework="onnx")
-                console.print("[dim green]✓ Wake Word ativada (Ei NetEye)[/dim green]")
+                self.ww_model = Model(wakeword_models=["hey_neteye"], inference_framework="onnx")
+                console.print("[dim green][OK] Wake Word ativada (Ei NetEye)[/dim green]")
             except Exception as e:
                 console.print(f"[dim yellow]⚠️ Falha ao carregar Wake Word: {e}. Modo 'sempre escuta' ativo.[/dim yellow]")
                 self._active_listening = True
@@ -87,26 +89,33 @@ class Listener:
             frame_bytes = frame_bytes[:expected_len]
         return frame_bytes
 
-    def ouvir_comando(self, speaker=None) -> str | None:
+    def ouvir_comando(self, speaker=None, ignorar_wake_word=False, timeout=180.0) -> str | None:
         """
         Bloqueia até detetar wake word e depois uma fala completa.
+        Suporta bypass de wake word e timeout personalizado.
         """
         frames_voz = []
         frames_silencio = 0
         a_gravar = False
         inicio_idle = time.time()
 
-        # Resetar estado se estivermos a usar wake word
+        # Resetar estado se estivermos a usar wake word e não for para ignorar
         if self.ww_model:
-            self._active_listening = False
+            if ignorar_wake_word:
+                self._active_listening = True
+            else:
+                self._active_listening = False
 
         # Limpar queue
         while not self._audio_queue.empty():
             self._audio_queue.get_nowait()
 
         while True:
-            # Bug 9: Watchdog
-            if not a_gravar and (time.time() - inicio_idle > 180):
+            # Watchdog/Timeout
+            tempo_idle = time.time() - inicio_idle
+            if not a_gravar and (tempo_idle > timeout):
+                if timeout == 10.0:
+                    return "TIMEOUT"
                 return "TIMEOUT_IDLE"
 
             try:
@@ -116,32 +125,33 @@ class Listener:
 
             # Echo Prevention com suporte a interrupção por voz
             if speaker and speaker.esta_a_falar():
-                # Verificar se o utilizador está a tentar interromper (voz forte e contínua)
-                try:
-                    frame_bytes = self._get_vad_bytes(frame)
-                    tem_voz_forte = self.vad.is_speech(frame_bytes, self.SAMPLE_RATE)
-                except Exception:
-                    tem_voz_forte = False
-                
-                if tem_voz_forte:
-                    # Contar frames consecutivos de voz durante a fala do speaker
-                    if not hasattr(self, '_interrupt_count'):
-                        self._interrupt_count = 0
-                    self._interrupt_count += 1
+                if self.interromper_ao_falar:
+                    # Verificar se o utilizador está a tentar interromper (voz forte e contínua)
+                    try:
+                        frame_bytes = self._get_vad_bytes(frame)
+                        tem_voz_forte = self.vad.is_speech(frame_bytes, self.SAMPLE_RATE)
+                    except Exception:
+                        tem_voz_forte = False
                     
-                    # Se detetados 5+ frames consecutivos de voz (~150ms), interromper o speaker
-                    if self._interrupt_count >= 5:
-                        console.print("[bold yellow]⚡ Interrupção detetada — a silenciar speaker.[/bold yellow]")
-                        speaker.parar()
+                    if tem_voz_forte:
+                        # Contar frames consecutivos de voz durante a fala do speaker
+                        if not hasattr(self, '_interrupt_count'):
+                            self._interrupt_count = 0
+                        self._interrupt_count += 1
+                        
+                        # Se detetados 5+ frames consecutivos de voz (~150ms), interromper o speaker
+                        if self._interrupt_count >= 5:
+                            console.print("[bold yellow]⚡ Interrupção detetada — a silenciar speaker.[/bold yellow]")
+                            speaker.parar()
+                            self._interrupt_count = 0
+                            a_gravar = False
+                            frames_voz.clear()
+                            inicio_idle = time.time()
+                            continue
+                    else:
                         self._interrupt_count = 0
-                        a_gravar = False
-                        frames_voz.clear()
-                        inicio_idle = time.time()
-                        continue
-                else:
-                    self._interrupt_count = 0
                 
-                # Se não interrompeu, descartar frame (eco do speaker)
+                # Se não interrompeu (ou interrupção desativada), descartar frame (eco do speaker)
                 a_gravar = False
                 frames_voz.clear()
                 inicio_idle = time.time()

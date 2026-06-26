@@ -2,11 +2,12 @@
 login_view.py — Ecrã de Login
 Equivalente a login.html
 """
-# pyrefly: ignore [missing-import]
+import os
 import customtkinter as ctk
+from PIL import Image
 from gui.theme import (
-    BG, SURFACE, SURFACE_2, ACCENT, RED, TEXT_1, TEXT_2, TEXT_3,
-    BORDER, FONT_TITLE, FONT_BODY, FONT_BOLD, FONT_BODY_SM
+    BG, SURFACE, SURFACE_2, ACCENT, ACCENT_HOV, RED, TEXT_1, TEXT_2, TEXT_3,
+    BORDER, FONT_TITLE, FONT_BODY, FONT_BOLD, FONT_BODY_SM, RADIUS_MD, RADIUS_SM
 )
 
 
@@ -21,10 +22,25 @@ class LoginView(ctk.CTkFrame):
         super().__init__(master, fg_color=BG, corner_radius=0, **kwargs)
         self.on_login = on_login
         self.on_go_register = on_go_register
+        
+        # Carregar Logo
+        try:
+            logo_path = os.path.join("static", "logo.png")
+            if os.path.exists(logo_path):
+                self.logo_img = ctk.CTkImage(
+                    light_image=Image.open(logo_path),
+                    dark_image=Image.open(logo_path),
+                    size=(80, 80)
+                )
+            else:
+                self.logo_img = None
+        except Exception:
+            self.logo_img = None
+            
         self._build()
 
     def _build(self):
-        # Centra o card verticalmente
+        # Centra o card verticalmente e horizontalmente
         self.grid_rowconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -33,24 +49,25 @@ class LoginView(ctk.CTkFrame):
         card = ctk.CTkFrame(
             self,
             fg_color=SURFACE,
-            corner_radius=16,
+            corner_radius=RADIUS_MD,
             border_width=1,
             border_color=BORDER,
-            width=400,
         )
         card.grid(row=1, column=1, padx=20, pady=40, sticky="nsew")
-        card.grid_propagate(False)
-        card.configure(height=520)
 
         inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=36, pady=32)
+        inner.pack(fill="both", expand=True, padx=40, pady=35)
+
+        # Logo
+        if self.logo_img:
+            ctk.CTkLabel(inner, image=self.logo_img, text="").pack(pady=(0, 10))
 
         # Título
         ctk.CTkLabel(
-            inner, text="👁  NetEye",
+            inner, text="NetEye",
             font=FONT_TITLE,
             text_color=TEXT_1
-        ).pack(pady=(0, 4))
+        ).pack(pady=(0, 2))
 
         ctk.CTkLabel(
             inner, text="Assistente de Voz Inteligente",
@@ -64,9 +81,9 @@ class LoginView(ctk.CTkFrame):
             inner, placeholder_text="Ex: Herik",
             fg_color=SURFACE_2, border_color=BORDER,
             text_color=TEXT_1, placeholder_text_color=TEXT_3,
-            height=38, corner_radius=8
+            height=42, corner_radius=RADIUS_SM, width=340
         )
-        self.entry_user.pack(fill="x", pady=(4, 14))
+        self.entry_user.pack(fill="x", pady=(4, 16))
         self.entry_user.bind("<Return>", lambda e: self.entry_pass.focus())
 
         # Campo password
@@ -75,7 +92,7 @@ class LoginView(ctk.CTkFrame):
             inner, placeholder_text="Insira a sua senha",
             fg_color=SURFACE_2, border_color=BORDER,
             text_color=TEXT_1, placeholder_text_color=TEXT_3,
-            show="●", height=38, corner_radius=8
+            show="●", height=42, corner_radius=RADIUS_SM, width=340
         )
         self.entry_pass.pack(fill="x", pady=(4, 6))
         self.entry_pass.bind("<Return>", lambda e: self._submit())
@@ -83,23 +100,24 @@ class LoginView(ctk.CTkFrame):
         # Label de erro
         self.lbl_error = ctk.CTkLabel(
             inner, text="", font=FONT_BODY_SM,
-            text_color=RED, wraplength=320
+            text_color=RED, wraplength=340
         )
         self.lbl_error.pack(pady=(4, 8))
 
         # Botão Entrar
         ctk.CTkButton(
             inner, text="Entrar",
-            height=40, corner_radius=8,
+            height=44, corner_radius=RADIUS_SM,
             font=FONT_BOLD,
             fg_color=ACCENT,
-            hover_color="#3b7eef",
+            hover_color=ACCENT_HOV,
+            width=340,
             command=self._submit
         ).pack(fill="x")
 
         # Link Registo
         link_frame = ctk.CTkFrame(inner, fg_color="transparent")
-        link_frame.pack(pady=(18, 0))
+        link_frame.pack(pady=(20, 0))
         ctk.CTkLabel(
             link_frame, text="Ainda não tem conta? ",
             font=FONT_BODY_SM, text_color=TEXT_3
@@ -140,3 +158,4 @@ class LoginView(ctk.CTkFrame):
         self.clear_fields()
         if self.on_go_register:
             self.on_go_register()
+

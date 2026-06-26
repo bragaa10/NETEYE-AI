@@ -1,5 +1,16 @@
 import os
 import sys
+# Configurar codificação UTF-8 para consola para evitar erros com emojis no Windows (cp1252)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
@@ -9,11 +20,18 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Configurar variáveis de ambiente mock para testes
+os.environ["SUPABASE_URL"] = "https://mock.supabase.co"
+os.environ["SUPABASE_KEY"] = "mock-key-123"
+os.environ["NETEYE_ENCRYPTION_KEY"] = "mock-encryption-key-12345678"
+
 from core.database import Database
 from core.listener import Listener
 from core.eleven_speaker import ElevenSpeaker
 from core.talker import Talker
 from core.assistant import Assistant
+from core.vision import Vision
+from core.cache_manager import CacheManager
 
 class TestNetEyeDatabase(unittest.TestCase):
     @patch('core.database.create_client')
@@ -126,16 +144,28 @@ class TestNetEyeSpeaker(unittest.TestCase):
 
 
 class TestNetEyeTalker(unittest.TestCase):
-    def test_talker_silent_under_3s(self):
+    def test_talker_silent_under_2s_on_default(self):
         falar_mock = MagicMock()
         talker = Talker(falar_mock)
         
-        # Iniciar comando e parar logo em seguida (simulando resposta rápida)
-        talker.iniciar_comando("navegar")
+        # Iniciar comando "default" e parar logo em seguida
+        talker.iniciar_comando("default")
         talker.parar()
         
-        # Não deve ter falado nada (porque parou antes de 3 segundos)
+        # Não deve ter falado nada (porque parou antes de 2 segundos)
         falar_mock.assert_not_called()
+
+    def test_talker_immediate_cues_on_tool(self):
+        falar_mock = MagicMock()
+        talker = Talker(falar_mock)
+        
+        talker.iniciar_comando("navegar")
+        # Deve ter falado imediatamente (sem esperar)
+        import time
+        time.sleep(0.1)
+        talker.parar()
+        
+        falar_mock.assert_called()
 
 
 class TestNetEyeAssistant(unittest.TestCase):
@@ -200,6 +230,64 @@ class TestNetEyeAssistant(unittest.TestCase):
         self.assertEqual(len(history[2]["content"]), 2) # Ambos os resultados de ferramentas
         self.assertEqual(history[2]["content"][0]["tool_use_id"], "tool-1")
         self.assertEqual(history[2]["content"][1]["tool_use_id"], "tool-2")
+
+
+class TestNetEyeVision(unittest.TestCase):
+    @patch('core.vision._obter_reader')
+    @patch('cv2.imread')
+    @patch('cv2.cvtColor')
+    @patch('cv2.threshold')
+    @patch('cv2.imwrite')
+    def test_vision_extraction_mocked(self, mock_imwrite, mock_threshold, mock_cvtColor, mock_imread, mock_obter_reader):
+        mock_reader = MagicMock()
+        mock_obter_reader.return_value = mock_reader
+        
+        # Mock OCR result
+        mock_reader.readtext.return_value = [
+            ([[0, 0], [10, 0], [10, 10], [0, 10]], "Texto detectado no ecrã", 0.9)
+        ]
+        mock_threshold.return_value = (None, None)
+        
+        vision = Vision()
+        res = vision.extrair_texto_screenshot(caminho_imagem="dummy.png")
+        self.assertEqual(res, "Texto detectado no ecrã")
+
+    def test_pagina_tem_conteudo_visual(self):
+        vision = Vision()
+        self.assertTrue(vision.pagina_tem_conteudo_visual("<html><canvas id='game'></canvas></html>"))
+        self.assertFalse(vision.pagina_tem_conteudo_visual("<html><p>Apenas texto normal</p></html>"))
+
+
+class TestNetEyeCache(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.cache = CacheManager(cache_dir=self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_memory_cache_get_set(self):
+        # Valor normal
+        self.cache.set("chave1", "valor1", ttl=10)
+        self.assertEqual(self.cache.get("chave1"), "valor1")
+        
+        # Valor expirado
+        self.cache.set("chave2", "valor2", ttl=-1)
+        self.assertIsNone(self.cache.get("chave2"))
+
+    def test_comando_cache(self):
+        cmd = "ajuda-me a navegar"
+        resp = {"resposta": "ok"}
+        self.cache.cache_comando(cmd, resp, ttl=5)
+        self.assertEqual(self.cache.obter_comando_cache(cmd), resp)
+
+    def test_url_index_persistence(self):
+        self.cache.registar_url("https://exemplo.com", "Exemplo", {"meta": 1})
+        visitada, info = self.cache.url_já_visitada("https://exemplo.com")
+        self.assertTrue(visitada)
+        self.assertEqual(info["titulo"], "Exemplo")
+        self.assertEqual(info["metadata"]["meta"], 1)
 
 
 if __name__ == "__main__":

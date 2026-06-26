@@ -2,36 +2,78 @@
 NetEye — core/database.py
 ==========================
 Persistência de dados com Supabase (Cloud).
+[OTIMIZAÇÃO] Integrado com connection pool para melhor performance.
 """
 
 import os
 import json
+import threading
 from datetime import datetime
 from rich.console import Console
 from supabase import create_client, Client
+from core.credentials import obter_supabase_url, obter_supabase_key, obter_chave_encriptacao
 
 console = Console()
+
+# Importar o pool de conexões (otimização)
+try:
+    from core.connection_pool import obter_pool, PooledSupabaseClient
+    _usar_pool = True
+except ImportError:
+    _usar_pool = False
+
+
+def usar_pool(func):
+    """Decorator para garantir que a query usa uma conexão do pool se disponível."""
+    def wrapper(self, *args, **kwargs):
+        if self.pool:
+            with PooledSupabaseClient() as client:
+                old_client = getattr(self._thread_local, "client", None)
+                self.client = client
+                try:
+                    return func(self, *args, **kwargs)
+                finally:
+                    self.client = old_client
+        else:
+            return func(self, *args, **kwargs)
+    return wrapper
 
 
 class Database:
     def __init__(self, caminho_legado: str = None):
-        url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_KEY")
+        self._thread_local = threading.local()
+        self._static_client = None
+        self.pool = None
+
+        url = obter_supabase_url()
+        key = obter_supabase_key()
 
         if not url or not key:
-            console.print("[bold red]❌ SUPABASE_URL ou SUPABASE_KEY não configuradas no .env[/bold red]")
-            self.client = None
+            console.print("[bold red]❌ SUPABASE_URL ou SUPABASE_KEY não configuradas[/bold red]")
         else:
             try:
-                self.client: Client = create_client(url, key)
+                self._static_client = create_client(url, key)
+                # Inicializar pool se disponível (otimização)
+                if _usar_pool:
+                    self.pool = obter_pool()
             except Exception as e:
                 console.print(f"[bold red]❌ Erro ao ligar à Supabase: {e}[/bold red]")
-                self.client = None
+
+    @property
+    def client(self) -> Client:
+        if hasattr(self._thread_local, "client") and self._thread_local.client is not None:
+            return self._thread_local.client
+        return self._static_client
+
+    @client.setter
+    def client(self, val):
+        self._thread_local.client = val
 
     # ------------------------------------------------------------------
     # UTILIZADORES
     # ------------------------------------------------------------------
 
+    @usar_pool
     def obter_utilizador(self, username: str) -> dict | None:
         if not self.client: return None
         try:
@@ -41,6 +83,7 @@ class Database:
             console.print(f"[red]Erro ao obter utilizador: {e}[/red]")
             return None
 
+    @usar_pool
     def atualizar_username(self, user_id: int, novo_username: str) -> bool:
         if not self.client: return False
         try:
@@ -50,6 +93,7 @@ class Database:
             console.print(f"[red]Erro ao atualizar username: {e}[/red]")
             return False
 
+    @usar_pool
     def registar_utilizador(self, username: str, password_hash: str) -> int:
         if not self.client: return -1
         try:
@@ -68,20 +112,27 @@ class Database:
     # CONFIGURAÇÕES E CRIPTOGRAFIA
     # ------------------------------------------------------------------
 
+    def _get_fernet(self):
+        """Obtém instância Fernet com chave dedicada."""
+        import base64
+        import hashlib
+        from cryptography.fernet import Fernet
+        
+        raw = obter_chave_encriptacao()
+        if not raw:
+            raise EnvironmentError(
+                "Chave de encriptação NETEYE_ENCRYPTION_KEY não definida."
+            )
+        # FIX: Chave de encriptação dedicada e independente da chave Supabase.
+        # Permite rodar SUPABASE_KEY sem perder dados encriptados.
+        digest = hashlib.sha256(raw.encode()).digest()
+        return Fernet(base64.urlsafe_b64encode(digest))
+
     def _encrypt(self, text: str) -> str:
         if not text:
             return ""
         try:
-            import base64
-            import hashlib
-            from cryptography.fernet import Fernet
-            
-            skey = os.environ.get("SUPABASE_KEY", "neteye-fallback-secret-salt-12345")
-            hasher = hashlib.sha256()
-            hasher.update(skey.encode('utf-8'))
-            key = base64.urlsafe_b64encode(hasher.digest())
-            
-            f = Fernet(key)
+            f = self._get_fernet()
             return f.encrypt(text.encode('utf-8')).decode('utf-8')
         except Exception as e:
             console.print(f"[red]Erro ao encriptar texto: {e}[/red]")
@@ -94,21 +145,26 @@ class Database:
             # Se não começar com o cabeçalho Fernet, é texto limpo
             return text
         try:
-            import base64
-            import hashlib
-            from cryptography.fernet import Fernet
-            
-            skey = os.environ.get("SUPABASE_KEY", "neteye-fallback-secret-salt-12345")
-            hasher = hashlib.sha256()
-            hasher.update(skey.encode('utf-8'))
-            key = base64.urlsafe_b64encode(hasher.digest())
-            
-            f = Fernet(key)
+            f = self._get_fernet()
             return f.decrypt(text.encode('utf-8')).decode('utf-8')
         except Exception:
             # Em caso de falha de decriptação, assume texto limpo
             return text
 
+    @usar_pool
+    def esta_disponivel(self) -> bool:
+        """Verifica se Supabase está acessível."""
+        # FIX: Verificar disponibilidade do Supabase antes de iniciar a sessão.
+        if not self.client:
+            return False
+        try:
+            self.client.table("utilizadores").select("id").limit(1).execute()
+            return True
+        except Exception as e:
+            console.print(f"[red]Erro em esta_disponivel: {e}[/red]")
+            return False
+
+    @usar_pool
     def guardar_configuracao(self, user_id: int, chave: str, valor: str) -> bool:
         if not self.client: return False
         try:
@@ -121,6 +177,7 @@ class Database:
             console.print(f"[red]Erro ao guardar configuração: {e}[/red]")
             return False
 
+    @usar_pool
     def obter_configuracao(self, user_id: int, chave: str, padrao: str = "") -> str:
         if not self.client: return padrao
         try:
@@ -129,9 +186,11 @@ class Database:
             if chave == "api_key":
                 val = self._decrypt(val)
             return val
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em obter_configuracao: {e}[/red]")
             return padrao
 
+    @usar_pool
     def obter_todas_configuracoes(self, user_id: int) -> dict:
         if not self.client: return {}
         try:
@@ -140,13 +199,15 @@ class Database:
             if "api_key" in configs:
                 configs["api_key"] = self._decrypt(configs["api_key"])
             return configs
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em obter_todas_configuracoes: {e}[/red]")
             return {}
 
     # ------------------------------------------------------------------
     # FAVORITOS
     # ------------------------------------------------------------------
 
+    @usar_pool
     def adicionar_favorito(self, user_id: int, nome: str, url: str) -> bool:
         if not self.client: return False
         try:
@@ -162,34 +223,41 @@ class Database:
             console.print(f"[red]Erro ao guardar favorito: {e}[/red]")
             return False
 
+    @usar_pool
     def listar_favoritos(self, user_id: int) -> list[dict]:
         if not self.client: return []
         try:
             res = self.client.table("favoritos").select("id, nome, url").eq("user_id", user_id).order("nome").execute()
             return res.data
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em listar_favoritos: {e}[/red]")
             return []
 
+    @usar_pool
     def remover_favorito_por_url(self, user_id: int, url: str) -> bool:
         if not self.client: return False
         try:
             res = self.client.table("favoritos").delete().eq("user_id", user_id).eq("url", url).execute()
             return True if res.data else False
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em remover_favorito_por_url: {e}[/red]")
             return False
 
+    @usar_pool
     def remover_favorito_por_id(self, user_id: int, id_favorito: int) -> bool:
         if not self.client: return False
         try:
             res = self.client.table("favoritos").delete().eq("user_id", user_id).eq("id", id_favorito).execute()
             return True if res.data else False
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em remover_favorito_por_id: {e}[/red]")
             return False
 
     # ------------------------------------------------------------------
     # HISTÓRICO DE NAVEGAÇÃO
     # ------------------------------------------------------------------
 
+    @usar_pool
     def registar_visita(self, user_id: int, url: str, titulo: str = ""):
         if not self.client: return
         try:
@@ -200,37 +268,45 @@ class Database:
                 "data_visita": datetime.now().isoformat()
             }
             self.client.table("historico").insert(data).execute()
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em registar_visita: {e}[/red]")
             pass
 
+    @usar_pool
     def historico_recente(self, user_id: int, limite: int = 10) -> list[dict]:
         if not self.client: return []
         try:
             res = self.client.table("historico").select("url, titulo, data_visita").eq("user_id", user_id).order("data_visita", desc=True).limit(limite).execute()
             return res.data
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em historico_recente: {e}[/red]")
             return []
 
+    @usar_pool
     def historico_completo(self, user_id: int) -> list[dict]:
         if not self.client: return []
         try:
             res = self.client.table("historico").select("url, titulo, data_visita").eq("user_id", user_id).order("data_visita", desc=True).execute()
             return res.data
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em historico_completo: {e}[/red]")
             return []
 
+    @usar_pool
     def limpar_historico(self, user_id: int) -> bool:
         if not self.client: return False
         try:
             res = self.client.table("historico").delete().eq("user_id", user_id).execute()
             return True
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em limpar_historico: {e}[/red]")
             return False
 
     # ------------------------------------------------------------------
     # HISTÓRICO DE COMANDOS (Novo - Func 2)
     # ------------------------------------------------------------------
 
+    @usar_pool
     def registar_comando(self, user_id: int, comando: str, resposta: str = ""):
         if not self.client: return
         try:
@@ -244,47 +320,56 @@ class Database:
         except Exception as e:
             console.print(f"[dim red]Erro ao registar comando: {e}[/dim red]")
 
+    @usar_pool
     def obter_ultimo_comando(self, user_id: int) -> dict | None:
         if not self.client: return None
         try:
             res = self.client.table("comando_historico").select("*").eq("user_id", user_id).order("data_comando", desc=True).limit(1).execute()
             return res.data[0] if res.data else None
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em obter_ultimo_comando: {e}[/red]")
             return None
 
     # ------------------------------------------------------------------
     # ATALHOS DE VOZ (Novo - Func 6)
     # ------------------------------------------------------------------
 
+    @usar_pool
     def adicionar_atalho(self, user_id: int, frase: str, acao: str) -> bool:
         if not self.client: return False
         try:
             data = {"user_id": user_id, "frase": frase.lower(), "acao": acao}
             self.client.table("atalhos").upsert(data, on_conflict="user_id,frase").execute()
             return True
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em adicionar_atalho: {e}[/red]")
             return False
 
+    @usar_pool
     def listar_atalhos(self, user_id: int) -> list[dict]:
         if not self.client: return []
         try:
             res = self.client.table("atalhos").select("*").eq("user_id", user_id).execute()
             return res.data
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em listar_atalhos: {e}[/red]")
             return []
 
+    @usar_pool
     def remover_atalho(self, user_id: int, atalho_id: int) -> bool:
         if not self.client: return False
         try:
             self.client.table("atalhos").delete().eq("user_id", user_id).eq("id", atalho_id).execute()
             return True
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em remover_atalho: {e}[/red]")
             return False
 
     # ------------------------------------------------------------------
     # BLOQUEIOS
     # ------------------------------------------------------------------
 
+    @usar_pool
     def adicionar_bloqueio(self, user_id: int, url: str) -> bool:
         if not self.client: return False
         try:
@@ -295,37 +380,45 @@ class Database:
             }
             res = self.client.table("bloqueios").insert(data).execute()
             return True if res.data else False
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em adicionar_bloqueio: {e}[/red]")
             return False
 
+    @usar_pool
     def listar_bloqueios(self, user_id: int) -> list[dict]:
         if not self.client: return []
         try:
             res = self.client.table("bloqueios").select("id, url, data_bloqueio").eq("user_id", user_id).order("data_bloqueio", desc=True).execute()
             return res.data
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em listar_bloqueios: {e}[/red]")
             return []
 
+    @usar_pool
     def remover_bloqueio_por_url(self, user_id: int, url: str) -> bool:
         if not self.client: return False
         try:
             res = self.client.table("bloqueios").delete().eq("user_id", user_id).eq("url", url).execute()
             return True if res.data else False
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em remover_bloqueio_por_url: {e}[/red]")
             return False
 
+    @usar_pool
     def remover_bloqueio_por_id(self, user_id: int, id_bloqueio: int) -> bool:
         if not self.client: return False
         try:
             res = self.client.table("bloqueios").delete().eq("user_id", user_id).eq("id", id_bloqueio).execute()
             return True if res.data else False
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em remover_bloqueio_por_id: {e}[/red]")
             return False
 
     # ------------------------------------------------------------------
     # RELATÓRIOS DE SESSÃO (Novo - Func 11)
     # ------------------------------------------------------------------
 
+    @usar_pool
     def guardar_relatorio_sessao(self, user_id: int, dados: dict):
         if not self.client: return
         try:
@@ -342,6 +435,7 @@ class Database:
     # BACKUP / EXPORT (Func 14)
     # ------------------------------------------------------------------
 
+    @usar_pool
     def exportar_dados(self, user_id: int) -> dict:
         """Exporta favoritos, bloqueios e atalhos para JSON."""
         return {
@@ -355,21 +449,27 @@ class Database:
     # PREFERÊNCIAS (GLOBAIS)
     # ------------------------------------------------------------------
 
+    @usar_pool
     def guardar_preferencia(self, chave: str, valor: str):
         if not self.client: return
         try:
             data = {"chave": chave, "valor": str(valor)}
             self.client.table("preferencias").upsert(data).execute()
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em guardar_preferencia: {e}[/red]")
             pass
 
+    @usar_pool
     def obter_preferencia(self, chave: str, padrao: str = "") -> str:
         if not self.client: return padrao
         try:
             res = self.client.table("preferencias").select("valor").eq("chave", chave).execute()
             return res.data[0]["valor"] if res.data else padrao
-        except Exception:
+        except Exception as e:
+            console.print(f"[red]Erro em obter_preferencia: {e}[/red]")
             return padrao
 
     def fechar(self):
+        """Supabase usa HTTP — não há conexão persistente para fechar.
+        # FIX: Documentar explicitamente que não há cleanup necessário."""
         pass

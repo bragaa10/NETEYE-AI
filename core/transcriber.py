@@ -71,7 +71,7 @@ class Transcriber:
                     num_workers=1,
                     download_root="./models",
                 )
-                console.print(f"[dim green]✓ faster-whisper '{modelo}' pronto.[/dim green]")
+                console.print(f"[dim green][OK] faster-whisper '{modelo}' pronto.[/dim green]")
             except Exception as e:
                 init_res["error"] = e
                 console.print(f"[yellow]⚠ Erro ao carregar faster-whisper: {e}.[/yellow]")
@@ -81,17 +81,17 @@ class Transcriber:
         # Dar tolerância curta no startup
         self.thread_init.join(timeout=0.5)
 
-    def transcrever(self, caminho_audio: str) -> str:
+    def transcrever(self, caminho_audio: str, fast: bool = False) -> str:
         if not caminho_audio or not os.path.exists(caminho_audio):
             return ""
 
         if not self.modelo:
             if hasattr(self, "thread_init") and self.thread_init.is_alive():
                 try: os.unlink(caminho_audio)
-                except: pass
+                except Exception: pass
                 return "MODELO_CARREGANDO"
             try: os.unlink(caminho_audio)
-            except: pass
+            except Exception: pass
             return ""
 
         try:
@@ -106,27 +106,45 @@ class Transcriber:
             
             def _transcrever():
                 try:
-                    segmentos, info = self.modelo.transcribe(
-                        audio,
-                        language=self.idioma,
-                        beam_size=1,
-                        temperature=0.0,
-                        condition_on_previous_text=False,
-                        initial_prompt=(
-                            "Assistente de navegação web. Comandos em português de Portugal: "
-                            "abrir YouTube, pesquisar no Google, aceitar tudo, rejeitar tudo, "
-                            "voltar atrás, descer a página, clicar em entrar, sim, não, por favor."
-                        ),
-                        compression_ratio_threshold=2.2,
-                        log_prob_threshold=-0.6,
-                        no_speech_threshold=0.5,
-                        vad_filter=True,
-                        vad_parameters=dict(
-                            min_silence_duration_ms=400,
-                            speech_pad_ms=500,
-                            threshold=0.45,
-                        ),
-                    )
+                    if fast:
+                        # Modo ultra-rápido para resposta de sim/não
+                        segmentos, info = self.modelo.transcribe(
+                            audio,
+                            language=self.idioma,
+                            beam_size=1,
+                            temperature=0.0,
+                            condition_on_previous_text=False,
+                            initial_prompt="sim. não.",
+                            max_new_tokens=5,
+                            vad_filter=True,
+                            vad_parameters=dict(
+                                min_silence_duration_ms=200,
+                                speech_pad_ms=200,
+                                threshold=0.5,
+                            ),
+                        )
+                    else:
+                        segmentos, info = self.modelo.transcribe(
+                            audio,
+                            language=self.idioma,
+                            beam_size=1,
+                            temperature=0.0,
+                            condition_on_previous_text=False,
+                            initial_prompt=(
+                                "Assistente de navegação web. Comandos em português de Portugal: "
+                                "abrir YouTube, pesquisar no Google, aceitar tudo, rejeitar tudo, "
+                                "voltar atrás, descer a página, clicar em entrar, sim, não, por favor."
+                            ),
+                            compression_ratio_threshold=2.2,
+                            log_prob_threshold=-0.6,
+                            no_speech_threshold=0.5,
+                            vad_filter=True,
+                            vad_parameters=dict(
+                                min_silence_duration_ms=400,
+                                speech_pad_ms=500,
+                                threshold=0.45,
+                            ),
+                        )
                     # Consumir o generator no worker thread para processar o áudio lá
                     resultado["segmentos"] = list(segmentos) if segmentos is not None else None
                 except Exception as e:
@@ -134,10 +152,10 @@ class Transcriber:
             
             thread = threading.Thread(target=_transcrever, daemon=True)
             thread.start()
-            thread.join(timeout=30.0)
+            thread.join(timeout=5.0 if fast else 30.0)
             
             if thread.is_alive():
-                console.print("[bold red]⚠️ Timeout na transcrição (>30s)[/bold red]")
+                console.print(f"[bold red]⚠️ Timeout na transcrição {'rápida' if fast else ''} (>30s)[/bold red]")
                 return ""
             
             if resultado["erro"]: raise resultado["erro"]
@@ -161,7 +179,7 @@ class Transcriber:
             try:
                 if os.path.exists(caminho_audio):
                     os.unlink(caminho_audio)
-            except: pass
+            except Exception: pass
 
     def _carregar_wav(self, caminho: str) -> np.ndarray | None:
         try:

@@ -35,9 +35,6 @@ class DashboardView(ctk.CTkFrame):
         self._log_thread: threading.Thread | None = None
         self._build()
 
-        # Auto-iniciar assistente após breve delay para UI estabilizar
-        self.after(500, self._start_assistant)
-
     # ── Construção UI ────────────────────────────────────────────────────────
     def _build(self):
         # Scroll container
@@ -207,7 +204,7 @@ class DashboardView(ctk.CTkFrame):
         return {
             "comandos":  len(self.db.historico_completo(self.user_id)),
             "favoritos": len(self.db.listar_favoritos(self.user_id)),
-            "bloqueados": len(self.db.listar_bloqueios(id_utilizador=self.user_id)),
+            "bloqueados": len(self.db.listar_bloqueios(self.user_id)),
         }
 
     def refresh(self):
@@ -238,9 +235,21 @@ class DashboardView(ctk.CTkFrame):
             self._start_assistant()
 
     def _start_assistant(self):
-        api_key = self.db.obter_configuracao(self.user_id, "api_key") or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key or not api_key.strip():
-            self.terminal.error("Configure a chave API em Configurações primeiro.")
+        # 1. Tenta obter a chave pessoal do utilizador na BD (criptografada)
+        api_key = self.db.obter_configuracao(self.user_id, "api_key", "").strip()
+        
+        # 2. Se não houver, tenta obter a chave global partilhada na BD (tabela preferencias)
+        if not api_key:
+            global_key = self.db.obter_preferencia("claude_api_key", "").strip()
+            if global_key:
+                api_key = self.db._decrypt(global_key)
+
+        # 3. Fallback de desenvolvimento: tenta obter do ficheiro .env
+        if not api_key:
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+
+        if not api_key:
+            self.terminal.error("Chave API do Claude não configurada! Por favor, configure a chave na base de dados ou aceda às Configurações.")
             return
 
         headless = self.db.obter_configuracao(self.user_id, "modo_headless", "False") == "True"
@@ -249,8 +258,9 @@ class DashboardView(ctk.CTkFrame):
             cmd = [sys.executable]
         else:
             # No modo script (Python)
-            # Garantir que usamos o script run_gui.py como entrada
-            run_gui_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "run_gui.py")
+            # Garantir que usamos o script run_gui.py como entrada (project_root = gui/views/../..)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            run_gui_path = os.path.join(project_root, "run_gui.py")
             cmd = [sys.executable, run_gui_path]
 
         cmd += ["--assistant", "--user-id", str(self.user_id)]
@@ -286,8 +296,10 @@ class DashboardView(ctk.CTkFrame):
 
     def _start_log_thread(self):
         def reader():
-            while self._process and self._process.poll() is None:
-                line = self._process.stdout.readline()
+            proc = self._process
+            if not proc:
+                return
+            for line in iter(proc.stdout.readline, ""):
                 if line:
                     txt = line.strip()
                     tag = "normal"

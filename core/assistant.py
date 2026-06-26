@@ -56,6 +56,9 @@ class Assistant:
             except Exception as e:
                 console.print(f"[red]Erro ao inicializar Talker: {e}[/red]")
 
+    def registar_screenshot(self, func):
+        self._get_screenshot = func
+
     def atualizar_atalhos(self, lista_atalhos: list):
         """Atualiza o dicionário de atalhos locais."""
         self._atalhos = {a["frase"].lower().strip(): a["acao"] for a in lista_atalhos}
@@ -98,11 +101,22 @@ class Assistant:
             return
 
         # 3. Verificar Cache (Func 10)
-        # Se a página mudou, o cache de ações de navegação pode ser inválido
-        if cmd_limpo in self._cache:
+        # Primeiro tentar o cache_manager (otimização) se disponível
+        cache_manager = getattr(self, "_cache_manager", None)
+        if cache_manager:
+            cached = cache_manager.obter_comando_cache(cmd_limpo)
+            if cached:
+                console.print("[dim green]🚀 Cache hit (CacheManager)![/dim green]")
+                resp = cached.get("resposta")
+                acao = cached.get("acao")
+                params = cached.get("params")
+                if acao: self._exec(acao, params)
+                if resp: self._falar(resp)
+                return
+        elif cmd_limpo in self._cache:
             resp, acao, params, timestamp = self._cache[cmd_limpo]
             if time.time() - timestamp < self._cache_expiry:
-                console.print("[dim green]🚀 Cache hit![/dim green]")
+                console.print("[dim green]🚀 Cache hit (Memória Local)![/dim green]")
                 if acao: self._exec(acao, params)
                 self._falar(resp)
                 return
@@ -115,7 +129,10 @@ class Assistant:
             
             # Se for um comando simples (sem parâmetros complexos), guardar em cache
             if len(comando.split()) < 4:
-                self._cache[cmd_limpo] = (resposta_final, None, None, time.time())
+                if cache_manager:
+                    cache_manager.cache_comando(cmd_limpo, {"resposta": resposta_final, "acao": None, "params": None})
+                else:
+                    self._cache[cmd_limpo] = (resposta_final, None, None, time.time())
                 
             if "registar_comando" in self._cb: 
                 self._cb["registar_comando"](user_id, comando, resposta_final)
@@ -127,9 +144,12 @@ class Assistant:
     def _loop_claude(self, hist: list, user_id: int) -> str:
         # Instruções de Sistema (Persona Sénior)
         system_prompt = (
-            "És o NetEye, um assistente especializado em navegação web para pessoas cegas ou com baixa visão. "
-            "Sê conciso, direto e usa feedback sonoro quando necessário. "
-            "Ações destrutivas (apagar histórico, remover favoritos) requerem confirmação. "
+            "És o NetEye, um assistente de voz para navegação web concebido para utilizadores invisuais. "
+            "Fala de forma natural, calorosa e coloquial, como numa conversa normal. "
+            "Responde sempre de forma extremamente concisa, com no máximo duas frases curtas. "
+            "Nunca uses listas, marcadores, bullets, asteriscos ou formatação markdown, pois a tua resposta será lida por um sintetizador de voz. "
+            "Não descrevas os passos técnicos que fizeste; diz diretamente o resultado final ou responde ao que foi pedido. "
+            "Ações destrutivas como limpar o histórico ou remover favoritos requerem confirmação. "
             "Se detetares uma página de login, avisa o utilizador."
         )
 
@@ -201,6 +221,11 @@ class Assistant:
                     "properties": {"termo": {"type": "string"}},
                     "required": ["termo"]
                 }
+            },
+            {
+                "name": "ler_ecra_ocr",
+                "description": "Lê o conteúdo visível do ecrã usando OCR (útil para páginas com conteúdo dinâmico ou imagens).",
+                "input_schema": {"type": "object", "properties": {}}
             }
         ]
 
@@ -211,9 +236,11 @@ class Assistant:
                 self._talker.iniciar_comando("default")
 
             try:
+                modelo = self.config.get("claude", {}).get("modelo", "claude-3-5-sonnet-20240620")
+                max_tok = self.config.get("claude", {}).get("max_tokens", 1024)
                 res = self.client.messages.create(
-                    model="claude-3-5-sonnet-20240620",
-                    max_tokens=1024,
+                    model=modelo,
+                    max_tokens=max_tok,
                     system=system_prompt,
                     messages=hist,
                     tools=tools

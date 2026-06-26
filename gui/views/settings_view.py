@@ -101,18 +101,11 @@ class SettingsView(ctk.CTkFrame):
         card.pack(fill="x", padx=24, pady=(16, 0))
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="x", padx=18, pady=16)
-        ctk.CTkLabel(inner, text="🔑  Conta e API", font=FONT_H3, text_color=TEXT_1).pack(anchor="w", pady=(0, 12))
-        row = ctk.CTkFrame(inner, fg_color="transparent")
-        row.pack(fill="x")
-        row.columnconfigure((0, 1), weight=1)
-        left = ctk.CTkFrame(row, fg_color="transparent"); left.grid(row=0, column=0, sticky="ew", padx=(0, 12))
-        ctk.CTkLabel(left, text="Nome de Utilizador", font=FONT_BODY_SM, text_color=TEXT_2, anchor="w").pack(fill="x")
-        self.entry_username = ctk.CTkEntry(left, fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT_1, height=36, corner_radius=8)
+        ctk.CTkLabel(inner, text="👤  Conta", font=FONT_H3, text_color=TEXT_1).pack(anchor="w", pady=(0, 12))
+        
+        ctk.CTkLabel(inner, text="Nome de Utilizador", font=FONT_BODY_SM, text_color=TEXT_2, anchor="w").pack(fill="x")
+        self.entry_username = ctk.CTkEntry(inner, fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT_1, height=36, corner_radius=8)
         self.entry_username.pack(fill="x", pady=(4, 0))
-        right = ctk.CTkFrame(row, fg_color="transparent"); right.grid(row=0, column=1, sticky="ew", padx=(12, 0))
-        ctk.CTkLabel(right, text="Chave API Anthropic", font=FONT_BODY_SM, text_color=TEXT_2, anchor="w").pack(fill="x")
-        self.entry_api = ctk.CTkEntry(right, fg_color=SURFACE_2, border_color=BORDER, text_color=TEXT_1, show="●", height=36, corner_radius=8)
-        self.entry_api.pack(fill="x", pady=(4, 0))
 
     def _build_backup_card(self, parent):
         """Card para Exportar/Importar dados (Func 14)."""
@@ -138,9 +131,6 @@ class SettingsView(ctk.CTkFrame):
             if configs.get(key, "False") == "True": sw.select()
             else: sw.deselect()
         self.entry_username.delete(0, "end"); self.entry_username.insert(0, self.username)
-        api_key = configs.get("api_key", "")
-        self.entry_api.delete(0, "end")
-        if api_key: self.entry_api.insert(0, api_key)
         self._current_voice_id = configs.get("voz_local", "")
 
     def _load_voices(self):
@@ -150,7 +140,7 @@ class SettingsView(ctk.CTkFrame):
             voices = engine.getProperty("voices") or []
             self._voices = [{"id": v.id, "name": v.name} for v in voices]
             engine.stop()
-        except: self._voices = []
+        except Exception: self._voices = []
         if self._voices:
             names = [v["name"] for v in self._voices]
             self.cmb_voice.configure(values=names)
@@ -173,7 +163,7 @@ class SettingsView(ctk.CTkFrame):
                 if v["name"] == sel_name: engine.setProperty("voice", v["id"]); break
             engine.say("Teste de voz do NetEye bem sucedido.")
             engine.runAndWait()
-        except: pass
+        except Exception: pass
 
     def _export_data(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")], title="Exportar Dados NetEye")
@@ -193,8 +183,8 @@ class SettingsView(ctk.CTkFrame):
             with open(path, "r", encoding="utf-8") as f:
                 dados = json.load(f)
             # Favoritos
-            for f in dados.get("favoritos", []):
-                self.db.adicionar_favorito(self.user_id, f["nome"], f["url"])
+            for fav in dados.get("favoritos", []):
+                self.db.adicionar_favorito(self.user_id, fav["nome"], fav["url"])
             # Bloqueios
             for b in dados.get("bloqueios", []):
                 self.db.adicionar_bloqueio(self.user_id, b["url"])
@@ -213,12 +203,11 @@ class SettingsView(ctk.CTkFrame):
         sel_name = self.cmb_voice.get()
         for v in self._voices:
             if v["name"] == sel_name: self.db.guardar_configuracao(self.user_id, "voz_local", v["id"]); break
-        api_key = self.entry_api.get().strip()
-        if api_key: self.db.guardar_configuracao(self.user_id, "api_key", api_key)
+
         new_user = self.entry_username.get().strip()
         if new_user and new_user != self.username:
             if self.db.atualizar_username(self.user_id, new_user): # Corrigido Bug Legado
                 self.username = new_user
                 if self.on_username_change: self.on_username_change(new_user)
-        self.lbl_success.configure(text="✓  Configurações guardadas com sucesso!")
+        self.lbl_success.configure(text="[OK]  Configurações guardadas com sucesso!")
         self.after(3000, lambda: self.lbl_success.configure(text=""))

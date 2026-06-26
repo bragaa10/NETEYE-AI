@@ -1,35 +1,37 @@
 """
-NetEye — core/vision.py
-========================
+NetEye — core/vision.py (VISÃO SÉNIOR / OCR)
+===========================================
 Fallback de visão computacional para páginas que não são acessíveis via DOM.
-
 Usa EasyOCR para extrair texto de screenshots.
-Útil para: PDFs no browser, CAPTCHAs, aplicações canvas, imagens com texto.
+Thread-safe singleton loader.
 """
 
 import os
 import tempfile
-import mss
-import mss.tools
+import threading
 import cv2
 import numpy as np
+import mss
+import mss.tools
 from PIL import Image
 from rich.console import Console
 
 console = Console()
 
-# EasyOCR é importado de forma lazy (demorada a carregar)
 _ocr_reader = None
-
+_ocr_lock = threading.Lock()
 
 def _obter_reader():
-    """Carrega o EasyOCR apenas quando necessário."""
+    """Carrega o EasyOCR de forma thread-safe apenas quando necessário."""
     global _ocr_reader
     if _ocr_reader is None:
-        console.print("[dim]⏳ A carregar EasyOCR (primeira vez demora)...[/dim]")
-        import easyocr
-        _ocr_reader = easyocr.Reader(["pt", "en"], gpu=False, verbose=False)
-        console.print("[dim green]✓ EasyOCR carregado.[/dim green]")
+        with _ocr_lock:
+            if _ocr_reader is None:
+                console.print("[dim]⏳ A carregar EasyOCR (primeira vez demora)...[/dim]")
+                import easyocr
+                # gpu=False garante compatibilidade máxima sem CUDA
+                _ocr_reader = easyocr.Reader(["pt", "en"], gpu=False, verbose=False)
+                console.print("[dim green][OK] EasyOCR carregado.[/dim green]")
     return _ocr_reader
 
 
@@ -40,10 +42,7 @@ class Vision:
 
     def __init__(self):
         self._sct = mss.mss()
-
-    # ------------------------------------------------------------------
-    # API PÚBLICA
-    # ------------------------------------------------------------------
+        self._lock = threading.Lock()
 
     def capturar_ecra(self) -> str | None:
         """
@@ -51,18 +50,18 @@ class Vision:
         Retorna o caminho do ficheiro PNG.
         """
         try:
-            monitor = self._sct.monitors[1]  # Monitor principal
-            screenshot = self._sct.grab(monitor)
+            with self._lock:
+                monitor = self._sct.monitors[1]  # Monitor principal
+                screenshot = self._sct.grab(monitor)
 
-            tmp = tempfile.NamedTemporaryFile(
-                suffix=".png", delete=False, prefix="NetEye_screen_"
-            )
-            tmp_path = tmp.name
-            tmp.close()
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=".png", delete=False, prefix="NetEye_screen_"
+                )
+                tmp_path = tmp.name
+                tmp.close()
 
-            mss.tools.to_png(screenshot.rgb, screenshot.size, output=tmp_path)
-            return tmp_path
-
+                mss.tools.to_png(screenshot.rgb, screenshot.size, output=tmp_path)
+                return tmp_path
         except Exception as e:
             console.print(f"[red]Erro ao capturar ecrã: {e}[/red]")
             return None
@@ -119,7 +118,6 @@ class Vision:
     def pagina_tem_conteudo_visual(self, html: str) -> bool:
         """
         Verifica se a página tem conteúdo que só é acessível visualmente.
-        (CAPTCHAs, canvas, PDFs embedidos, etc.)
         """
         indicadores = [
             "canvas", "captcha", "recaptcha",

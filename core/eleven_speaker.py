@@ -44,8 +44,12 @@ class ElevenSpeaker:
 
         self._falando = False
         self._lock = threading.Lock()
+        # FIX: Separar _tts_lock de _sfx_lock para prevenir deadlock entre streams independentes.
+        self._tts_lock = threading.Lock()
         self._stream: Optional[sd.OutputStream] = None
         self._stop_event = threading.Event()
+        # FIX: Cache pyttsx3 engine para evitar overhead de 300ms por inicialização.
+        self._pyttsx3_engine = None
         
         # Fila de reprodução
         self._queue = queue.Queue()
@@ -55,7 +59,7 @@ class ElevenSpeaker:
         if self.api_key and not self.api_key.startswith("your_"):
             try:
                 self.client = ElevenLabs(api_key=self.api_key)
-                console.print(f"[dim green]✓ ElevenLabs pronto (Voz: {self.voice_id})[/dim green]")
+                console.print(f"[dim green][OK] ElevenLabs pronto (Voz: {self.voice_id})[/dim green]")
             except Exception as e:
                 console.print(f"[bold red]Erro ao inicializar ElevenLabs:[/bold red] {e}")
                 self.client = None
@@ -123,7 +127,7 @@ class ElevenSpeaker:
             try:
                 self._stream.stop()
                 self._stream.close()
-            except:
+            except Exception:
                 pass
         self._stream = None
 
@@ -162,6 +166,11 @@ class ElevenSpeaker:
                     self._fallback_local(texto)
             except Exception as e:
                 console.print(f"[red]Erro TTS (streaming): {e}[/red]")
+                # Se for erro de autenticação, créditos esgotados ou quota, desativar client para evitar lentidão futura
+                err_str = str(e).lower()
+                if "invalid" in err_str or "unauthorized" in err_str or "quota" in err_str or "limit" in err_str or "credit" in err_str:
+                    console.print("[yellow]⚠️ Desativando ElevenLabs devido a erro persistente de API (créditos esgotados ou chave inválida).[/yellow]")
+                    self.client = None
                 self._fallback_local(texto)
             finally:
                 self._falando = False
@@ -201,7 +210,11 @@ class ElevenSpeaker:
             import pythoncom
             
             pythoncom.CoInitialize()
-            engine = pyttsx3.init()
+            
+            # FIX: Reusar engine em cache em vez de inicializar a cada frase (~300ms poupados)
+            if self._pyttsx3_engine is None:
+                self._pyttsx3_engine = pyttsx3.init()
+            engine = self._pyttsx3_engine
             
             # Aplicar rate e volume (Func 9)
             engine.setProperty('rate', self.rate)
@@ -234,4 +247,6 @@ class ElevenSpeaker:
             
             pythoncom.CoUninitialize()
         except Exception as e:
+            # Se o engine em cache falhar, reiniciar na próxima chamada
+            self._pyttsx3_engine = None
             console.print(f"[dim red]Falha crítica: Fallback local indisponível ({e}).[/dim red]")

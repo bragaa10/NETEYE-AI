@@ -128,7 +128,11 @@ class BlockedView(ctk.CTkFrame):
         sel = self.tree.selection()
         if not sel:
             return
-        blk_id = int(sel[0])
+        # FIX: Proteger contra IDs de placeholder não numéricos (ex: 'I001')
+        raw_id = sel[0]
+        if not raw_id.isdigit():
+            return
+        blk_id = int(raw_id)
         if messagebox.askyesno("Desbloquear", "Tem a certeza que quer desbloquear este domínio?"):
             self.db.remover_bloqueio_por_id(self.user_id, blk_id)
             self.refresh()

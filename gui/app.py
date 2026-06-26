@@ -41,7 +41,7 @@ class NetEyeApp(ctk.CTk):
 
         try:
             self.after(200, lambda: self.iconbitmap("static/logo.ico"))
-        except:
+        except Exception:
             pass
 
         self.db = Database()
@@ -52,6 +52,7 @@ class NetEyeApp(ctk.CTk):
 
         self._build_layout()
         self._bind_shortcuts() # Func 13
+        self._verificar_atualizacao() # Verificação de update no arranque
 
         session_data = self._load_session()
         if session_data:
@@ -83,18 +84,41 @@ class NetEyeApp(ctk.CTk):
         self.bind("<Down>", lambda e: self._shortcut_scroll("baixo"))
 
     def _shortcut_mic(self):
-        if self._current_page == "dashboard" and hasattr(self._current_view, "start_assistant"):
-            self._current_view.start_assistant()
+        if self._current_page == "dashboard" and hasattr(self._current_view, "_start_assistant"):
+            self._current_view._start_assistant()
 
     def _shortcut_stop(self):
-        if self._current_page == "dashboard" and hasattr(self._current_view, "stop_assistant"):
-            self._current_view.stop_assistant()
+        if self._current_page == "dashboard" and hasattr(self._current_view, "_stop_assistant"):
+            self._current_view._stop_assistant()
 
     def _shortcut_scroll(self, direcao: str):
         # Enviar comando de scroll para o assistente (se estiver ativo)
-        # Por agora, isto exigiria comunicação com o processo main.py
-        # Mas para o teclado local, podemos simular se houver uma API de controlo.
         pass
+
+    def _verificar_atualizacao(self):
+        """Verifica atualização no GitHub em background thread."""
+        import threading
+        def _check():
+            try:
+                from core.updater import Updater
+                updater = Updater("bragaa10", "NETEYE-AI", "v1.0.0")
+                resultado = updater.verificar_atualizacao()
+                if resultado.get("update"):
+                    versao = resultado.get("version", "")
+                    url = resultado.get("url", "")
+                    # Mostrar notificação na UI thread
+                    self.after(0, lambda: self._mostrar_update(versao, url))
+            except Exception:
+                pass  # Silencioso — não bloquear arranque por falha de rede
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _mostrar_update(self, versao: str, url: str):
+        """Mostra banner de atualização disponível."""
+        import webbrowser
+        from tkinter import messagebox
+        if messagebox.askyesno("Atualização Disponível",
+            f"A versão {versao} do NetEye está disponível.\nDeseja abrir a página de download?"):
+            webbrowser.open(url)
 
     # ------------------------------------------------------------------
     # RESTO DA LÓGICA
@@ -122,11 +146,10 @@ class NetEyeApp(ctk.CTk):
             if hasattr(self._current_view, "show_error"):
                 self._current_view.show_error("Credenciais inválidas.")
 
-    def _do_register(self, username: str, api_key: str, password: str, confirm: str):
+    def _do_register(self, username: str, password: str, confirm: str):
         pw_hash  = generate_password_hash(password)
         user_id  = self.db.registar_utilizador(username, pw_hash)
         if user_id > 0:
-            self.db.guardar_configuracao(user_id, "api_key", api_key)
             self.db.guardar_configuracao(user_id, "velocidade", "135")
             self.db.guardar_configuracao(user_id, "volume", "100")
             self.db.guardar_configuracao(user_id, "talker_ativo", "True")
@@ -189,7 +212,7 @@ class NetEyeApp(ctk.CTk):
             os.makedirs(os.path.dirname(self.SESSION_FILE), exist_ok=True)
             with open(self.SESSION_FILE, "w", encoding="utf-8") as f:
                 json.dump({"user_id": user_id, "username": username}, f)
-        except: pass
+        except Exception: pass
 
     def _load_session(self) -> tuple[int, str] | None:
         try:
@@ -197,13 +220,13 @@ class NetEyeApp(ctk.CTk):
                 with open(self.SESSION_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     return data["user_id"], data["username"]
-        except: pass
+        except Exception: pass
         return None
 
     def _clear_session(self):
         try:
             if os.path.exists(self.SESSION_FILE): os.remove(self.SESSION_FILE)
-        except: pass
+        except Exception: pass
 
 if __name__ == "__main__":
     app = NetEyeApp()
