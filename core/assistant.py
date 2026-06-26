@@ -125,10 +125,10 @@ class Assistant:
         hist = [{"role":"user","content":comando}]
         try:
             # Enviar para o loop de iterações do Claude
-            resposta_final = self._loop_claude(hist, user_id)
+            resposta_final, tools_called = self._loop_claude(hist, user_id)
             
-            # Se for um comando simples (sem parâmetros complexos), guardar em cache
-            if len(comando.split()) < 4:
+            # Se for um comando simples (sem parâmetros complexos) E não executou ferramentas (conversacional), guardar em cache
+            if len(comando.split()) < 4 and not tools_called:
                 if cache_manager:
                     cache_manager.cache_comando(cmd_limpo, {"resposta": resposta_final, "acao": None, "params": None})
                 else:
@@ -141,7 +141,40 @@ class Assistant:
             console.print(f"[red]Erro Assistant: {e}[/red]")
             self._falar("Desculpa, tive um erro ao processar o teu pedido.")
 
-    def _loop_claude(self, hist: list, user_id: int) -> str:
+    def _pruning_historico(self, hist: list) -> list:
+        """
+        Mantém o último bloco de mensagens (resultados de ferramentas mais recentes) intacto,
+        mas trunca o conteúdo de tool_results de turnos anteriores para economizar tokens.
+        """
+        if len(hist) <= 2:
+            return hist
+            
+        # Criar uma nova lista para não mutar destrutivamente o histórico principal
+        novo_hist = []
+        for idx, msg in enumerate(hist[:-1]):
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list):
+                novo_content = []
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        content_str = block.get("content", "")
+                        if len(content_str) > 500:
+                            block_copy = block.copy()
+                            block_copy["content"] = content_str[:500] + "\n[Conteúdo truncado para economizar tokens nas iterações seguintes]"
+                            novo_content.append(block_copy)
+                        else:
+                            novo_content.append(block)
+                    else:
+                        novo_content.append(block)
+                msg_copy = msg.copy()
+                msg_copy["content"] = novo_content
+                novo_hist.append(msg_copy)
+            else:
+                novo_hist.append(msg)
+                
+        novo_hist.append(hist[-1])
+        return novo_hist
+
+    def _loop_claude(self, hist: list, user_id: int) -> tuple:
         # Instruções de Sistema (Persona Sénior)
         system_prompt = (
             "És o NetEye, um assistente de voz para navegação web concebido para utilizadores invisuais. "
@@ -229,6 +262,10 @@ class Assistant:
             }
         ]
 
+        # Guardar ferramentas chamadas neste loop para detetar runaway loops e flag de ferramentas ativas
+        historico_ferramentas = []
+        tools_called = False
+
         # Início do Loop de 5 iterações
         for i in range(5):
             # Iniciar o Talker antes do pedido ao Claude
@@ -238,12 +275,25 @@ class Assistant:
             try:
                 modelo = self.config.get("claude", {}).get("modelo", "claude-3-5-sonnet-20240620")
                 max_tok = self.config.get("claude", {}).get("max_tokens", 1024)
+                
+                # Cópia das ferramentas com Prompt Caching (Beta)
+                cached_tools = []
+                for idx, tool in enumerate(tools):
+                    tool_copy = tool.copy()
+                    if idx == len(tools) - 1:
+                        tool_copy["cache_control"] = {"type": "ephemeral"}
+                    cached_tools.append(tool_copy)
+
+                # Pruning de mensagens anteriores em hist
+                hist_enviado = self._pruning_historico(hist)
+
                 res = self.client.messages.create(
                     model=modelo,
                     max_tokens=max_tok,
                     system=system_prompt,
-                    messages=hist,
-                    tools=tools
+                    messages=hist_enviado,
+                    tools=cached_tools,
+                    extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}
                 )
             finally:
                 # Parar o Talker assim que a API responder
@@ -255,15 +305,27 @@ class Assistant:
 
             if tool_calls:
                 hist.append({"role": "assistant", "content": res.content})
+                tools_called = True
                 
                 tool_results = []
                 for block in tool_calls:
+                    # Runaway Loop Guard
+                    arg_str = json.dumps(block.input, sort_keys=True)
+                    call_key = (block.name, arg_str)
+                    historico_ferramentas.append(call_key)
+                    
+                    if historico_ferramentas.count(call_key) > 2:
+                        console.print(f"[bold red]⚠️ Runaway loop guard ativado: {block.name}({arg_str})[/bold red]")
+                        msg_aviso = "Desculpa, percebi que estamos a tentar a mesma ação repetidamente sem sucesso. Podes tentar reformular o pedido?"
+                        self._falar(msg_aviso)
+                        return msg_aviso, True
+
                     # Verificar se é ação destrutiva (Func 3)
                     if block.name == "limpar_historico":
                         self._pendente_confirmacao = (block.name, {}, "Tens a certeza que queres apagar todo o teu histórico?")
                         msg = "Essa é uma ação permanente. Tens a certeza que queres apagar o histórico?"
                         self._falar(msg)
-                        return msg
+                        return msg, True
 
                     # Iniciar o Talker antes da execução da ferramenta
                     if self._talker:
@@ -292,9 +354,9 @@ class Assistant:
                 texto = "".join([block.text for block in res.content if block.type == "text"])
                 if texto:
                     self._falar(texto)
-                return texto
+                return texto, tools_called
 
-        return "Não consegui terminar, tenta um pedido mais simples."
+        return "Não consegui terminar, tenta um pedido mais simples.", tools_called
 
     # ------------------------------------------------------------------
     # INTERNO / TOOLS

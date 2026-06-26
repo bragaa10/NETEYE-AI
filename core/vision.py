@@ -101,6 +101,8 @@ class Vision:
 
             textos.sort(key=lambda x: x[0])
             resultado = "\n".join(t[1] for t in textos)
+            if len(resultado) > 1500:
+                resultado = resultado[:1500] + "\n[Conteúdo OCR truncado para economizar recursos]"
 
             # Limpar ficheiros temporários
             for f in [caminho_imagem, tmp_proc]:

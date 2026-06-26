@@ -147,7 +147,7 @@ class BrowserController:
                     if (el) { root = el; break; }
                 }
                 
-                const pElements = Array.from(root.querySelectorAll('p')).map(el => el.innerText.trim()).filter(t => t.length > 20);
+                const pElements = Array.from(root.querySelectorAll('p')).map(el => el.innerText.trim()).filter(t => t.length > 20).map(t => t.length > 400 ? t.substring(0, 400) + '...' : t);
                 const firstParagraphs = pElements.slice(0, 3);
                 
                 const aElements = Array.from(root.querySelectorAll('a')).filter(el => {

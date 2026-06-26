@@ -231,6 +231,70 @@ class TestNetEyeAssistant(unittest.TestCase):
         self.assertEqual(history[2]["content"][0]["tool_use_id"], "tool-1")
         self.assertEqual(history[2]["content"][1]["tool_use_id"], "tool-2")
 
+    def test_history_pruning(self):
+        assistant = Assistant({"assistente": {"talker_ativo": False}}, api_key="sk-ant-test")
+        
+        # Histórico de teste com um tool_result longo anterior e um tool_result curto recente
+        long_content = "A" * 1000
+        short_content = "curto"
+        
+        hist = [
+            {"role": "user", "content": "olá"},
+            {"role": "assistant", "content": "vou ler a página"},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "use-1", "content": long_content}
+            ]},
+            {"role": "assistant", "content": "outra ação"},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "use-2", "content": short_content}
+            ]}
+        ]
+        
+        pruned = assistant._pruning_historico(hist)
+        
+        # O último item deve continuar intacto (com short_content)
+        self.assertEqual(pruned[-1]["content"][0]["content"], short_content)
+        # O item anterior (long_content) deve estar truncado (deve ter menos que 600 caracteres)
+        self.assertTrue(len(pruned[2]["content"][0]["content"]) < 600)
+        self.assertIn("[Conteúdo truncado", pruned[2]["content"][0]["content"])
+
+    @patch('anthropic.Anthropic')
+    def test_runaway_loop_guard(self, mock_anthropic):
+        mock_client = MagicMock()
+        mock_anthropic.return_value = mock_client
+        
+        # Claude insiste em chamar a mesma ferramenta com mesmos argumentos
+        class MockToolUse:
+            def __init__(self, id, name, input):
+                self.id = id
+                self.type = "tool_use"
+                self.name = name
+                self.input = input
+                
+        mock_msg = MagicMock()
+        mock_msg.content = [MockToolUse("tool-1", "clicar", {"texto": "entrar"})]
+        mock_client.messages.create.return_value = mock_msg
+        
+        assistant = Assistant({"assistente": {"talker_ativo": False}}, api_key="sk-ant-test")
+        assistant.client = mock_client
+        
+        tool_cb = MagicMock(return_value={"ok": True})
+        assistant.registar_ferramenta("clicar", tool_cb)
+        
+        falar_mock = MagicMock()
+        assistant.registar_falar(falar_mock)
+        
+        history = [{"role": "user", "content": "clica entrar"}]
+        res, tools_called = assistant._loop_claude(history, user_id=1)
+        
+        # O loop guard deve ter sido ativado
+        self.assertTrue(tools_called)
+        self.assertIn("repetidamente sem sucesso", res)
+        # Deve ter sido chamado falar_mock com o aviso de loop guard
+        falar_mock.assert_any_call("Desculpa, percebi que estamos a tentar a mesma ação repetidamente sem sucesso. Podes tentar reformular o pedido?", nao_bloquear=True)
+        # A ferramenta não deve ser chamada indefinidamente (máximo 3 vezes)
+        self.assertTrue(tool_cb.call_count <= 3)
+
 
 class TestNetEyeVision(unittest.TestCase):
     @patch('core.vision._obter_reader')
