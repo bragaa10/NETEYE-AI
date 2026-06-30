@@ -85,6 +85,8 @@ class AudioEngine:
                     params = wf.getparams()
                     frames = wf.readframes(params.nframes)
                     audio_data = np.frombuffer(frames, dtype=np.int16)
+                    if params.nchannels > 1:
+                        audio_data = audio_data.reshape(-1, params.nchannels)
                     # FIX: blocking=True é correto. Já estamos numa thread daemon própria.
                     # blocking=False + sd.wait() é equivalente mas propenso a race conditions.
                     sd.play(audio_data, samplerate=params.framerate, blocking=True)

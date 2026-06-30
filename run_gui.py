@@ -25,7 +25,10 @@ if __name__ == "__main__":
     # Se houver argumentos de comando, age como o assistente (subprocesso)
     if len(sys.argv) > 1 and ("--assistant" in sys.argv or "--chave-api" in sys.argv):
         if "--assistant" in sys.argv:
-            sys.argv.remove("--assistant")
+            try:
+                sys.argv.remove("--assistant")
+            except ValueError:
+                pass
         import main as assistant_main
         assistant_main.main()
     else:

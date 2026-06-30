@@ -113,7 +113,7 @@ class NetEyeInstaller(ctk.CTk):
         self.configure(fg_color=BG)
         
         # Estado
-        self.install_path = os.path.join(os.environ["LOCALAPPDATA"], "NetEyeAI")
+        self.install_path = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "NetEyeAI")
         self.current_step = 1
         self.launch_after = tk.BooleanVar(value=True)
         self.create_shortcut = tk.BooleanVar(value=True)
@@ -252,7 +252,7 @@ class NetEyeInstaller(ctk.CTk):
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk); done += len(chunk)
                         # Se o tamanho total for desconhecido (como no zip do GitHub), envia progresso fictício
-                        pct = int((done / total) * 100) if total > 0 else 50
+                        pct = min(100, int((done / total) * 100)) if total > 0 else 50
                         self.after(0, lambda p=pct: self._update_progress(p, "A descarregar..."))
             
             # 3. Extração
@@ -279,7 +279,9 @@ class NetEyeInstaller(ctk.CTk):
                 # Proteção contra Zip Slip
                 for member in zip_ref.namelist():
                     member_path = os.path.realpath(os.path.join(target, member))
-                    if not member_path.startswith(os.path.realpath(target)):
+                    # Ensure path is strictly under target (handling trailing slash correctly)
+                    target_real = os.path.realpath(target)
+                    if not (member_path + os.sep).startswith(target_real + os.sep):
                         raise Exception("Path traversal detectado no ZIP!")
                 zip_ref.extractall(target)
             try:
@@ -364,7 +366,7 @@ class NetEyeInstaller(ctk.CTk):
 
             self.after(500, lambda: self._show_step(6))
         except Exception as e:
-            messagebox.showerror("Erro", f"Falha na instalação: {e}")
+            self.after(0, lambda err=e: messagebox.showerror("Erro", f"Falha na instalação: {err}"))
             self.after(0, lambda: self._show_step(3))
 
     def _update_progress(self, pct, msg):
@@ -381,7 +383,10 @@ class NetEyeInstaller(ctk.CTk):
         if self.current_step == 6: return
         self.current_step += 1; self._show_step(self.current_step)
 
-    def _prev_step(self): self.current_step -= 1; self._show_step(self.current_step)
+    def _prev_step(self):
+        if self.current_step <= 1: return
+        self.current_step -= 1
+        self._show_step(self.current_step)
     def _browse_path(self):
         p = filedialog.askdirectory(initialdir=self.install_path)
         if p:
@@ -394,7 +399,7 @@ class NetEyeInstaller(ctk.CTk):
         if self.launch_after.get():
             exe = os.path.join(self.install_path, "NetEyeAI.exe")
             if os.path.exists(exe):
-                subprocess.Popen([exe], cwd=self.install_path, shell=True)
+                subprocess.Popen([exe], cwd=self.install_path)
             else:
                 real_python, pyw_exe = find_python_and_pythonw()
                 script_path = os.path.join(self.install_path, "run_gui.py")

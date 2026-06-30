@@ -116,9 +116,11 @@ class AsyncIOManager:
     def aguardar_multiplas(self, futures: dict, timeout: float = 30) -> dict:
         """Aguarda múltiplos futures com timeout compartilhado."""
         resultados = {}
+        deadline = time.time() + timeout
         for nome, future in futures.items():
+            remaining = max(0.01, deadline - time.time())
             try:
-                resultado = future.result(timeout=timeout)
+                resultado = future.result(timeout=remaining)
                 resultados[nome] = (True, resultado)
             except Exception as e:
                 resultados[nome] = (False, str(e))
@@ -133,11 +135,18 @@ class AsyncIOManager:
 _async_manager: Optional[AsyncIOManager] = None
 
 
+_async_lock = threading.Lock()
+
+
 def obter_async_manager() -> AsyncIOManager:
     """Obtém a instância global do AsyncIOManager."""
     global _async_manager
     if _async_manager is None:
-        _async_manager = AsyncIOManager(max_workers=4)
+        with _async_lock:
+            if _async_manager is None:
+                _async_manager = AsyncIOManager(max_workers=4)
+                import atexit
+                atexit.register(_async_manager.parar)
     return _async_manager
 
 

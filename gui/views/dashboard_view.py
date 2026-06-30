@@ -284,8 +284,16 @@ class DashboardView(ctk.CTkFrame):
 
     def _stop_assistant(self):
         if self._process:
-            self._process.terminate()
-            self._process = None
+            try:
+                self._process.terminate()
+                self._process.wait(timeout=5)
+            except Exception:
+                pass
+            finally:
+                if self._process and self._process.stdout:
+                    try: self._process.stdout.close()
+                    except Exception: pass
+                self._process = None
         self.btn_toggle.configure(text="▶  Iniciar NetEye", fg_color=ACCENT, hover_color="#3b7eef")
         self.lbl_status_run.configure(text="⬤  Parado", text_color=TEXT_3)
         self._status_dots["mic"].configure(fg_color=SURFACE_3)

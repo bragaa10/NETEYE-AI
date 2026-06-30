@@ -16,8 +16,13 @@ class LogTerminal(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
         super().__init__(master, fg_color=SURFACE_2, corner_radius=12, **kwargs)
         self._queue: queue.Queue = queue.Queue()
+        self._destroyed = False
         self._build()
         self._poll()
+
+    def destroy(self):
+        self._destroyed = True
+        super().destroy()
 
     # ── Layout ──────────────────────────────────────────────────────────────
     def _build(self):
@@ -85,13 +90,28 @@ class LogTerminal(ctk.CTkFrame):
     # ── Polling interno ──────────────────────────────────────────────────────
     def _poll(self):
         """Drena a queue e escreve no textbox (executa na thread principal)."""
+        if self._destroyed:
+            return
         try:
+            inserted = False
             while True:
                 text, tag = self._queue.get_nowait()
                 self.textbox.configure(state="normal")
                 self.textbox._textbox.insert("end", text + "\n", tag)
                 self.textbox.see("end")
                 self.textbox.configure(state="disabled")
+                inserted = True
         except queue.Empty:
             pass
+
+        if inserted:
+            try:
+                line_count = int(self.textbox._textbox.index('end-1c').split('.')[0])
+                if line_count > 1000:
+                    self.textbox.configure(state="normal")
+                    self.textbox._textbox.delete('1.0', f'{line_count - 800}.0')
+                    self.textbox.configure(state="disabled")
+            except Exception:
+                pass
+
         self.after(120, self._poll)

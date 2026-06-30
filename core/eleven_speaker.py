@@ -28,6 +28,7 @@ class ElevenSpeaker:
     def __init__(self, config: dict):
         self.api_key = os.getenv("ELEVENLABS_API_KEY") or os.getenv("ELEVEN_API_KEY")
         self.voice_id = os.getenv("ELEVENLABS_VOICE_ID") or os.getenv("ELEVEN_VOICE_ID") or config.get("voice_id", "XrExE9yKIg1WjnnlVkGX")
+        self.voice_local_id = config.get("voz_local")
         self.model_id = config.get("model_id", "eleven_turbo_v2_5")
         
         # Configurações dinâmicas (Func 9)
@@ -48,6 +49,7 @@ class ElevenSpeaker:
         self._tts_lock = threading.Lock()
         self._stream: Optional[sd.OutputStream] = None
         self._stop_event = threading.Event()
+        self._stream_lock = threading.Lock()
         # FIX: Cache pyttsx3 engine para evitar overhead de 300ms por inicialização.
         self._pyttsx3_engine = None
         
@@ -123,13 +125,14 @@ class ElevenSpeaker:
                 break
         
         self._falando = False
-        if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                pass
-        self._stream = None
+        with self._stream_lock:
+            if self._stream:
+                try:
+                    self._stream.stop()
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
 
     def esta_a_falar(self) -> bool:
         return self._falando or not self._queue.empty()
@@ -146,10 +149,13 @@ class ElevenSpeaker:
         while True:
             try:
                 texto = self._queue.get()
-                if texto is None: break 
-                
-                self._executar(texto)
-                self._queue.task_done()
+                if texto is None:
+                    self._queue.task_done()
+                    break 
+                try:
+                    self._executar(texto)
+                finally:
+                    self._queue.task_done()
             except Exception as e:
                 console.print(f"[red]Erro no worker de áudio: {e}[/red]")
                 time.sleep(0.1)
@@ -189,63 +195,80 @@ class ElevenSpeaker:
             # Usar audio_lock para evitar colisão com AudioEngine
             with audio_lock:
                 with sd.OutputStream(samplerate=16000, channels=1, dtype='int16') as stream:
-                    self._stream = stream
-                    for chunk in audio_generator:
-                        if self._stop_event.is_set():
-                            break
-                        
-                        if chunk:
-                            audio_data = np.frombuffer(chunk, dtype=np.int16)
-                            # Aplicar volume (Func 9)
-                            if self.volume != 1.0:
-                                audio_data = (audio_data.astype(np.float32) * self.volume).clip(-32768, 32767).astype(np.int16)
+                    with self._stream_lock:
+                        self._stream = stream
+                    try:
+                        for chunk in audio_generator:
+                            if self._stop_event.is_set():
+                                break
                             
-                            stream.write(audio_data)
-        except Exception as e:
-            raise e
+                            if chunk:
+                                if len(chunk) % 2 != 0:
+                                    chunk = chunk[:-1]
+                                if not chunk:
+                                    continue
+                                audio_data = np.frombuffer(chunk, dtype=np.int16)
+                                # Aplicar volume (Func 9)
+                                if self.volume != 1.0:
+                                    audio_data = (audio_data.astype(np.float32) * self.volume).clip(-32768, 32767).astype(np.int16)
+                                
+                                try:
+                                    stream.write(audio_data)
+                                except Exception as e:
+                                    if self._stop_event.is_set():
+                                        break
+                                    raise e
+                    finally:
+                        with self._stream_lock:
+                            self._stream = None
+        except Exception:
+            raise
 
     def _fallback_local(self, texto: str):
+        import pythoncom
         try:
             import pyttsx3
-            import pythoncom
             
             pythoncom.CoInitialize()
-            
-            # FIX: Reusar engine em cache em vez de inicializar a cada frase (~300ms poupados)
-            if self._pyttsx3_engine is None:
-                self._pyttsx3_engine = pyttsx3.init()
-            engine = self._pyttsx3_engine
-            
-            # Aplicar rate e volume (Func 9)
-            engine.setProperty('rate', self.rate)
-            engine.setProperty('volume', min(1.0, self.volume)) # pyttsx3 limita a 1.0
-            
-            voices = engine.getProperty('voices')
-            lang_code = self.idioma.split('-')[0] # 'pt' de 'pt-PT'
-            
-            encontrou = False
-            for v in voices:
-                if lang_code in v.id.lower() or lang_code in v.name.lower():
-                    engine.setProperty('voice', v.id)
-                    encontrou = True
-                    break
-            
-            if not encontrou and self.voice_id:
-                engine.setProperty('voice', self.voice_id)
-            
-            # Dividir texto em frases para permitir interrupção entre cada uma
-            frases = _re.split(r'(?<=[.!?;])\s+', texto)
-            if not frases:
-                frases = [texto]
-            
-            for frase in frases:
-                if self._stop_event.is_set():
-                    break
-                if frase.strip():
-                    engine.say(frase.strip())
-                    engine.runAndWait()
-            
-            pythoncom.CoUninitialize()
+            try:
+                # FIX: Reusar engine em cache em vez de inicializar a cada frase (~300ms poupados)
+                if self._pyttsx3_engine is None:
+                    self._pyttsx3_engine = pyttsx3.init()
+                engine = self._pyttsx3_engine
+                
+                # Aplicar rate e volume (Func 9)
+                engine.setProperty('rate', self.rate)
+                engine.setProperty('volume', min(1.0, self.volume)) # pyttsx3 limita a 1.0
+                
+                voices = engine.getProperty('voices')
+                lang_code = self.idioma.split('-')[0] # 'pt' de 'pt-PT'
+                
+                encontrou = False
+                for v in voices:
+                    if lang_code in v.id.lower() or lang_code in v.name.lower():
+                        engine.setProperty('voice', v.id)
+                        encontrou = True
+                        break
+                
+                if not encontrou:
+                    if self.voice_local_id:
+                        engine.setProperty('voice', self.voice_local_id)
+                    elif self.voice_id and "HKEY_LOCAL_MACHINE" in self.voice_id:
+                        engine.setProperty('voice', self.voice_id)
+                
+                # Dividir texto em frases para permitir interrupção entre cada uma
+                frases = _re.split(r'(?<=[.!?;])\s+', texto)
+                if not frases:
+                    frases = [texto]
+                
+                for frase in frases:
+                    if self._stop_event.is_set():
+                        break
+                    if frase.strip():
+                        engine.say(frase.strip())
+                        engine.runAndWait()
+            finally:
+                pythoncom.CoUninitialize()
         except Exception as e:
             # Se o engine em cache falhar, reiniciar na próxima chamada
             self._pyttsx3_engine = None

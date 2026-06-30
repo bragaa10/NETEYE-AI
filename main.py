@@ -4,7 +4,14 @@ NetEye — main.py (INTEGRAÇÃO SÉNIOR)
 Orquestrador principal com suporte a todas as 14 funcionalidades seniores.
 [OTIMIZAÇÃO] Integrado com cache, connection pool, logging e I/O paralelo.
 """
-import os, argparse, threading, yaml, time, sys
+import os
+import argparse
+import threading
+import yaml
+import time
+import sys
+import atexit
+import json
 # Configurar codificação UTF-8 para consola para evitar erros com emojis no Windows (cp1252)
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -62,7 +69,9 @@ class NetEye:
         self.config     = config
         self.user_id    = user_id
         self.modo_texto = modo_texto
-        self._a_correr  = False
+        self._stop_event = threading.Event()
+        # Rastreia o último URL conhecido para detetar navegação real causada por cliques
+        self._ultima_url_conhecida = ""
         
         # Stats da Sessão (Func 11)
         self.stats = {
@@ -88,6 +97,27 @@ class NetEye:
 
         # 2. Configurações por Utilizador (Func 5)
         db_configs = self.db.obter_todas_configuracoes(user_id)
+        local_backup_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "local_config_backup.json")
+        
+        if db_configs:
+            try:
+                os.makedirs(os.path.dirname(local_backup_path), exist_ok=True)
+                backup_data = db_configs.copy()
+                if "api_key" in backup_data and backup_data["api_key"]:
+                    backup_data["api_key"] = self.db._encrypt(backup_data["api_key"])
+                with open(local_backup_path, "w", encoding="utf-8") as f:
+                    json.dump(backup_data, f, indent=2)
+            except Exception:
+                pass
+        else:
+            try:
+                if os.path.exists(local_backup_path):
+                    console.print("[yellow]⚠️ Supabase indisponível. A carregar configurações do backup local...[/yellow]")
+                    with open(local_backup_path, "r", encoding="utf-8") as f:
+                        db_configs = json.load(f)
+            except Exception:
+                pass
+
         for k, v in db_configs.items():
             # FIX: Usar conversores seguros para dados da DB (não confiáveis).
             if k == "velocidade": config["assistente"]["rate"] = safe_int(v)
@@ -95,9 +125,22 @@ class NetEye:
             if k == "idioma": config["assistente"]["idioma"] = v
             if k == "modo_headless": config["browser"]["modo_headless"] = (v == "True")
             if k == "talker_ativo": config["assistente"]["talker_ativo"] = (v == "True")
-            if k == "voz_local": config["assistente"]["voice_id"] = v
+            if k == "voz_local": config["assistente"]["voz_local"] = v
             if k == "interromper_ao_falar": config["vad"]["interromper_ao_falar"] = (v == "True")
             if k == "guardar_historico": config["assistente"]["guardar_historico"] = (v == "True")
+
+        # Fetch and decrypt API key from database if not provided via environment or CLI
+        if not api_key:
+            db_api_key = db_configs.get("api_key")
+            if db_api_key:
+                try:
+                    # If it's already plain (like if it was not encrypted in backup), use it, otherwise decrypt
+                    if db_api_key.startswith("gAAAAA"):
+                        api_key = self.db._decrypt(db_api_key)
+                    else:
+                        api_key = db_api_key
+                except Exception:
+                    api_key = db_api_key
 
         # 3. Inicializar Componentes
         self.speaker = ElevenSpeaker(config["assistente"])
@@ -151,9 +194,19 @@ class NetEye:
                         self.speaker.falar("Desculpa, esse site está na tua lista de sites bloqueados.")
                         return {"sucesso": False, "erro": "site_bloqueado", "mensagem": "Este site está bloqueado pelas tuas definições."}
 
-                self.stats["visitas"] += 1
+                # Dar feedback imediato para sites pesados antes de iniciar o carregamento que bloqueia a thread
+                if "youtube.com" in url_lower or "youtube" in url_lower:
+                    self.speaker.falar("A abrir o YouTube, por favor aguarda um momento...")
+                elif "instagram.com" in url_lower:
+                    self.speaker.falar("A abrir o Instagram, por favor aguarda...")
+                elif "facebook.com" in url_lower:
+                    self.speaker.falar("A abrir o Facebook, por favor aguarda...")
+                elif "amazon" in url_lower:
+                    self.speaker.falar("A abrir a Amazon, por favor aguarda...")
+
                 r = br.navegar(url)
                 if r.get("sucesso"):
+                    self.stats["visitas"] += 1
                     # Verificar se guardar_historico está ativo (Padrão: True)
                     if self.config.get("assistente", {}).get("guardar_historico", True):
                         threading.Thread(target=db.registar_visita, 
@@ -163,21 +216,82 @@ class NetEye:
                         self.speaker.falar("Detetei um formulário de login nesta página. Queres que eu preencha?")
                 return r
 
+            def clicar(texto):
+                # FIX: clicar() podia levar o utilizador a uma página totalmente nova
+                # (ex: clicar num vídeo do YouTube) sem que isso fosse contabilizado
+                # nas estatísticas de sessão nem registado no histórico de navegação.
+                # Comparamos o URL antes/depois do clique para detetar essa mudança.
+                url_antes = ""
+                try:
+                    url_antes = br.obter_relatorio_localizacao()
+                except Exception:
+                    pass
+
+                r = br.clicar_elemento(texto)
+
+                if r.get("sucesso"):
+                    try:
+                        url_atual = br._page.url if br._page else ""
+                        titulo_atual = br._obter_titulo_rapido() if hasattr(br, "_obter_titulo_rapido") else ""
+                    except Exception:
+                        url_atual, titulo_atual = "", ""
+
+                    # Se o clique resultou em navegação para uma página diferente,
+                    # tratamos como uma visita real — conta nas estatísticas e no histórico.
+                    if url_atual and url_atual != self._ultima_url_conhecida:
+                        self.stats["visitas"] += 1
+                        self._ultima_url_conhecida = url_atual
+                        if self.config.get("assistente", {}).get("guardar_historico", True) and url_atual:
+                            threading.Thread(target=db.registar_visita,
+                                             args=(self.user_id, url_atual, titulo_atual), daemon=True).start()
+                return r
+
             a.registar_ferramenta("navegar",          navegar)
             a.registar_ferramenta("pesquisar_google",  br.pesquisar_google)
-            a.registar_ferramenta("clicar",            br.clicar_elemento)
+            a.registar_ferramenta("pesquisar_youtube", br.pesquisar_youtube)
+            a.registar_ferramenta("clicar",            clicar)
             a.registar_ferramenta("escrever",          lambda texto: br.escrever_campo("", texto))
             a.registar_ferramenta("pressionar_enter",  br.pressionar_enter)
             
             # Novas Ferramentas Sénior (Func 4 & 8)
             a.registar_ferramenta("ler_pagina",       lambda: {"conteudo": br.extrair_conteudo_principal()})
             a.registar_ferramenta("onde_estou",       lambda: {"ok": br.obter_relatorio_localizacao()})
+            a.registar_ferramenta("obter_estrutura_cabecalhos", br.obter_estrutura_cabecalhos)
             
             # Ferramenta OCR - lê o ecrã via screenshot + OCR (Func 4)
             try:
                 from core.vision import Vision
                 _vision = Vision()
-                a.registar_ferramenta("ler_ecra_ocr", lambda: {"texto": _vision.extrair_texto_screenshot()})
+
+                def _ler_ecra_ocr():
+                    # FIX CRÍTICO: usar o screenshot REAL da página do browser
+                    # (br.tirar_screenshot) em vez de capturar o monitor físico
+                    # inteiro. Antes, o OCR podia ler qualquer coisa que estivesse
+                    # visível no ecrã do computador, completamente desligado do
+                    # que a página web realmente mostrava — incluindo a app de
+                    # terminal, o ambiente de trabalho, etc.
+                    img_bytes = br.tirar_screenshot()
+                    if not img_bytes:
+                        return {"texto": "[FALHA NO DIAGNÓSTICO: não foi possível capturar a página atual para leitura ótica]"}
+                    texto = _vision.extrair_texto_de_bytes(img_bytes)
+                    return {"texto": texto}
+
+                a.registar_ferramenta("ler_ecra_ocr", _ler_ecra_ocr)
+
+                # FIX: o EasyOCR demorava 20-40s a carregar na PRIMEIRA chamada,
+                # bloqueando o assistente a meio de uma conversa real (visível no
+                # log: "Downloading detection model..." enquanto o utilizador
+                # esperava resposta). Pré-carregamos o modelo em background logo
+                # no arranque, para que esteja pronto antes de ser necessário.
+                def _prewarm_ocr():
+                    try:
+                        from core.vision import _obter_reader
+                        _obter_reader()
+                        console.print("[dim green][OK] EasyOCR pré-carregado em background.[/dim green]")
+                    except Exception as e:
+                        console.print(f"[dim yellow]⚠️ Pré-carregamento OCR falhou (será carregado na primeira utilização): {e}[/dim yellow]")
+                threading.Thread(target=_prewarm_ocr, daemon=True).start()
+
             except ImportError:
                 console.print("[dim yellow]⚠️ Módulo Vision (OCR) não disponível[/dim yellow]")
             
@@ -199,7 +313,7 @@ class NetEye:
         a.registar_falar(self.speaker.falar)
 
     def iniciar(self):
-        self._a_correr = True
+        self._stop_event.clear()
         if self.browser:
             try:
                 self.browser.iniciar()
@@ -216,8 +330,8 @@ class NetEye:
         else:               self._loop_voz()
 
     def parar(self):
-        if not self._a_correr: return
-        self._a_correr = False
+        if self._stop_event.is_set(): return
+        self._stop_event.set()
         
         # Gerar Relatório de Sessão (Func 11)
         duracao = int(time.time() - self.stats["inicio"])
@@ -259,7 +373,7 @@ class NetEye:
             console.print(f"[dim]📊 Logs: {stats['ficheiros']} ficheiro(s), {stats['tamanho_mb']}MB[/dim]")
 
     def _loop_voz(self):
-        while self._a_correr:
+        while not self._stop_event.is_set():
             try:
                 # Se houver confirmação pendente, entramos no modo de confirmação rápida!
                 if self.assistant._pendente_confirmacao:
@@ -309,7 +423,7 @@ class NetEye:
 
     def _loop_texto(self):
         from rich.prompt import Prompt
-        while self._a_correr:
+        while not self._stop_event.is_set():
             try:
                 cmd = Prompt.ask("[bold cyan]>[/bold cyan]").strip()
                 if cmd.lower() in ("sair","exit"): break

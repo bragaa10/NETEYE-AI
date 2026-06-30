@@ -123,8 +123,14 @@ class SettingsView(ctk.CTkFrame):
 
     def _load_configs(self):
         configs = self.db.obter_todas_configuracoes(self.user_id)
-        vel = int(configs.get("velocidade", 135))
-        vol = int(configs.get("volume", 100))
+        try:
+            vel = int(configs.get("velocidade", 135))
+        except (ValueError, TypeError):
+            vel = 135
+        try:
+            vol = int(configs.get("volume", 100))
+        except (ValueError, TypeError):
+            vol = 100
         self.slider_vel.set(vel); self.slider_vol.set(vol)
         self.lbl_vel.configure(text=str(vel)); self.lbl_vol.configure(text=f"{vol}%")
         for key, sw in self._switches.items():
@@ -134,13 +140,18 @@ class SettingsView(ctk.CTkFrame):
         self._current_voice_id = configs.get("voz_local", "")
 
     def _load_voices(self):
+        engine = None
         try:
             import pyttsx3
             engine = pyttsx3.init()
             voices = engine.getProperty("voices") or []
             self._voices = [{"id": v.id, "name": v.name} for v in voices]
-            engine.stop()
-        except Exception: self._voices = []
+        except Exception:
+            self._voices = []
+        finally:
+            if engine:
+                try: engine.stop()
+                except Exception: pass
         if self._voices:
             names = [v["name"] for v in self._voices]
             self.cmb_voice.configure(values=names)
@@ -163,7 +174,8 @@ class SettingsView(ctk.CTkFrame):
                 if v["name"] == sel_name: engine.setProperty("voice", v["id"]); break
             engine.say("Teste de voz do NetEye bem sucedido.")
             engine.runAndWait()
-        except Exception: pass
+        except Exception as e:
+            self.lbl_success.configure(text=f"Erro ao testar voz: {e}", text_color=RED)
 
     def _export_data(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")], title="Exportar Dados NetEye")

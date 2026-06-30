@@ -33,6 +33,7 @@ class SupabaseConnectionPool:
         self._pool: Queue = Queue(maxsize=max_size)
         self._active_count = 0
         self._lock = threading.RLock()
+        self._closed = False
         
         url = obter_supabase_url()
         key = obter_supabase_key()
@@ -99,6 +100,10 @@ class SupabaseConnectionPool:
     def devolver(self, client: Client):
         """Devolve conexão ao pool."""
         if client:
+            if self._closed:
+                with self._lock:
+                    self._active_count = max(0, self._active_count - 1)
+                return
             try:
                 self._pool.put_nowait(client)
             except Exception:
@@ -109,6 +114,7 @@ class SupabaseConnectionPool:
     
     def limpar(self):
         """Limpa todo o pool."""
+        self._closed = True
         while not self._pool.empty():
             try:
                 self._pool.get_nowait()

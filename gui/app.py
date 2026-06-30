@@ -29,7 +29,7 @@ ctk.set_default_color_theme("blue")
 class NetEyeApp(ctk.CTk):
     WIDTH  = 1300
     HEIGHT = 850
-    SESSION_FILE = "data/session.json"
+    SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "session.json")
 
     def __init__(self):
         super().__init__()
@@ -39,10 +39,12 @@ class NetEyeApp(ctk.CTk):
         self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        try:
-            self.after(200, lambda: self.iconbitmap("static/logo.ico"))
-        except Exception:
-            pass
+        def safe_icon():
+            try:
+                self.iconbitmap("static/logo.ico")
+            except Exception:
+                pass
+        self.after(200, safe_icon)
 
         self.db = Database()
         self._user_id: int | None   = None
@@ -172,7 +174,11 @@ class NetEyeApp(ctk.CTk):
         self._navigate(page)
 
     def _navigate(self, page: str):
-        if self._current_page == page: return
+        if self._current_page == page:
+            if self._current_view and hasattr(self._current_view, "refresh"):
+                try: self._current_view.refresh()
+                except Exception: pass
+            return
         self._current_page = page
         self.sidebar.set_active(page)
         self._clear_content()
@@ -203,8 +209,17 @@ class NetEyeApp(ctk.CTk):
         self._current_page = ""
 
     def _on_close(self):
-        if (self._current_view and isinstance(self._current_view, DashboardView) and self._current_view._process and self._current_view._process.poll() is None):
-            self._current_view._process.terminate()
+        if (self._current_view and isinstance(self._current_view, DashboardView) 
+            and self._current_view._process and self._current_view._process.poll() is None):
+            try:
+                self._current_view._process.terminate()
+                self._current_view._process.wait(timeout=3)
+            except Exception:
+                pass
+            finally:
+                if self._current_view._process and self._current_view._process.stdout:
+                    try: self._current_view._process.stdout.close()
+                    except Exception: pass
         self.destroy()
 
     def _save_session(self, user_id: int, username: str):

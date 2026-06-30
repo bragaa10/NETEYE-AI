@@ -30,7 +30,6 @@ except Exception:
 
 def _aplicar_correcoes(texto: str) -> str:
     """Aplica correções fonéticas ao texto transcrito pelo Whisper."""
-    import re as _re
     t = texto.lower().strip()
 
     if t in _CORRECOES:
@@ -40,9 +39,9 @@ def _aplicar_correcoes(texto: str) -> str:
         return resultado
 
     for errado, certo in sorted(_CORRECOES.items(), key=lambda x: -len(x[0])):
-        padrao = r'(?<!\w)' + _re.escape(errado) + r'(?!\w)'
-        if _re.search(padrao, t):
-            t = _re.sub(padrao, certo, t)
+        padrao = r'(?<!\w)' + re.escape(errado) + r'(?!\w)'
+        if re.search(padrao, t):
+            t = re.sub(padrao, certo, t)
 
     if texto and texto[0].isupper() and t:
         t = t[0].upper() + t[1:]
@@ -189,22 +188,27 @@ class Transcriber:
                 n_channels  = wf.getnchannels()
                 sampwidth   = wf.getsampwidth()
 
-            dtype_map = {1: np.int8, 2: np.int16, 4: np.int32}
+            dtype_map = {1: np.uint8, 2: np.int16, 4: np.int32}
             dtype = dtype_map.get(sampwidth, np.int16)
             audio = np.frombuffer(frames, dtype=dtype).astype(np.float32)
 
             if n_channels > 1:
                 audio = audio.reshape(-1, n_channels).mean(axis=1)
 
-            max_val = float(np.iinfo(dtype).max)
-            audio   = audio / max_val
+            if sampwidth == 1:
+                # 8-bit WAV is unsigned
+                audio = (audio - 128.0) / 128.0
+            else:
+                max_val = float(np.iinfo(dtype).max)
+                audio   = audio / max_val
 
             if sample_rate != 16000:
                 try:
                     import scipy.signal as signal
                     num_samples = int(len(audio) * 16000 / sample_rate)
                     audio = signal.resample(audio, num_samples)
-                except ImportError: pass
+                except ImportError:
+                    console.print("[yellow]⚠️ scipy não está instalado. Não é possível reamostrar áudio para 16kHz. Instale com pip install scipy[/yellow]")
 
             return audio.astype(np.float32)
 

@@ -9,6 +9,7 @@ assistente:
   voice_id: "XrExE9yKIg1WjnnlVkGX"      # Daniel (PT-BR) de alta qualidade
   model_id: "eleven_turbo_v2_5"
   velocidade: 1.15
+  rate: 135
   volume: 1.0
   # Configurações ElevenLabs
   stability: 0.5
@@ -33,9 +34,10 @@ browser:
   navegador: "chromium"
 
 claude:
-  modelo: "claude-haiku-4-5-20251001"   # modelo mais rápido e barato
-  max_tokens: 350                        # forçar respostas extremamente curtas
-  temperatura: 0.0                       # determinístico = mais consistente
+  modelo: "claude-haiku-4-5-20251001"          # modelo mais rápido e barato
+  modelo_vision: "claude-sonnet-4-6"            # modelo com suporte a visão para OCR
+  max_tokens: 350                               # forçar respostas extremamente curtas
+  temperatura: 0.0                              # determinístico = mais consistente
 
 base_dados:
   caminho: "data/neteye.db"

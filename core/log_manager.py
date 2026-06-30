@@ -14,6 +14,7 @@ import os
 import logging
 import logging.handlers
 import gzip
+import threading
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -55,21 +56,22 @@ class LogManager:
         self.logger = logging.getLogger('neteye')
         self.logger.setLevel(self.log_level)
         
-        # Handler com rotação
-        log_file = self.log_dir / 'neteye.log'
-        handler = logging.handlers.RotatingFileHandler(
-            log_file,
-            maxBytes=self.max_bytes,
-            backupCount=self.backup_count
-        )
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
-        
-        # Handler para console também
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        console_handler.setLevel(logging.WARNING)  # Console apenas warnings/errors
-        self.logger.addHandler(console_handler)
+        if not self.logger.handlers:
+            # Handler com rotação
+            log_file = self.log_dir / 'neteye.log'
+            handler = logging.handlers.RotatingFileHandler(
+                log_file,
+                maxBytes=self.max_bytes,
+                backupCount=self.backup_count
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            
+            # Handler para console também
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            console_handler.setLevel(logging.WARNING)  # Console apenas warnings/errors
+            self.logger.addHandler(console_handler)
         
         console.print(f"[dim green][OK] LogManager pronto ({log_dir})[/dim green]")
         
@@ -103,6 +105,13 @@ class LogManager:
         for log_file in log_files:
             if not str(log_file).endswith('.gz'):
                 try:
+                    # Only compress files that are not currently active in RotatingFileHandler
+                    suffix = log_file.name.split('.')[-1]
+                    try:
+                        if int(suffix) <= self.backup_count:
+                            continue
+                    except ValueError:
+                        pass
                     gz_file = f"{log_file}.gz"
                     with open(log_file, 'rb') as f_in:
                         with gzip.open(gz_file, 'wb') as f_out:
@@ -153,11 +162,14 @@ class LogManager:
 
 # Instância global
 _log_manager: Optional[LogManager] = None
+_log_lock = threading.Lock()
 
 
 def obter_logger() -> LogManager:
     """Obtém a instância global do LogManager."""
     global _log_manager
     if _log_manager is None:
-        _log_manager = LogManager()
+        with _log_lock:
+            if _log_manager is None:
+                _log_manager = LogManager()
     return _log_manager

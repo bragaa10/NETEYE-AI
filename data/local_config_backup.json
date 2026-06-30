@@ -1,0 +1,13 @@
+{
+  "api_key": "gAAAAABqQ5cokJpMUAjKOOfdUokuDiFvTmOV4Yt6oiQ1uSF7oMdUzz8jx-IdVKhOaBPKOXbagGw9In2FC45ZwTh8nKZrqH3EUWZch98eJcFf3reLkJyGmGjMfLnQQm92YVbH55wH1tE8a68DvblgrrcLO-kSO0p2fBa6gEnHSM5vBHTt9oyVwpGAbymkmQDYLw6ehBwKSybRo0GZz-Tbl-VMwU7nbQ2MJw==",
+  "elevenlabs_api_key": "gAAAAABqPu-lADdMEgs8VnVMBk0THNiDpvi2Lqxrp7OExMIqbWA9uiS2y8SCH0vCIgvAbR4r-4uF2e-o1p1Cs9I76PubbgKqwZU0nH_042xV7xO-NyY8yV0nfX39nWr4vkLbHwEQXQJPYM2eptgDKzPoipl8ST_bcw==",
+  "elevenlabs_voice_id": "CwhRBWXzGAHq8TQ4Fs17",
+  "guardar_historico": "True",
+  "interromper_ao_falar": "False",
+  "modo_headless": "False",
+  "talker_ativo": "True",
+  "velocidade": "135",
+  "volume": "100",
+  "voz_local": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Speech\\Voices\\Tokens\\TTS_MS_PT-BR_MARIA_11.0",
+  "voz_tipo": "elevenlabs"
+}

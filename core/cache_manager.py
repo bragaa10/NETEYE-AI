@@ -58,10 +58,15 @@ class CacheManager:
                     del self._memory_cache[chave]
         return None
     
+    MAX_MEMORY_ENTRIES = 500
+
     def set(self, chave: str, valor: Any, ttl: int = 1800):
         """Armazena valor no cache com TTL."""
         with self._lock:
             self._memory_cache[chave] = (valor, time.time(), ttl)
+            if len(self._memory_cache) > self.MAX_MEMORY_ENTRIES:
+                oldest_key = min(self._memory_cache, key=lambda k: self._memory_cache[k][1])
+                del self._memory_cache[oldest_key]
     
     def invalidar(self, chave: str):
         """Remove valor do cache."""

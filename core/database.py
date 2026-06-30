@@ -8,7 +8,7 @@ Persistência de dados com Supabase (Cloud).
 import os
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from rich.console import Console
 from supabase import create_client, Client
 from core.credentials import obter_supabase_url, obter_supabase_key, obter_chave_encriptacao
@@ -27,13 +27,19 @@ def usar_pool(func):
     """Decorator para garantir que a query usa uma conexão do pool se disponível."""
     def wrapper(self, *args, **kwargs):
         if self.pool:
+            # Re-entrancy check: if this thread already has a pooled client, reuse it
+            old_client = getattr(self._thread_local, "client", None)
+            if old_client is not None:
+                self.client = old_client
+                return func(self, *args, **kwargs)
             with PooledSupabaseClient() as client:
-                old_client = getattr(self._thread_local, "client", None)
+                self._thread_local.client = client
                 self.client = client
                 try:
                     return func(self, *args, **kwargs)
                 finally:
-                    self.client = old_client
+                    self._thread_local.client = None
+                    self.client = None
         else:
             return func(self, *args, **kwargs)
     return wrapper
@@ -100,7 +106,7 @@ class Database:
             data = {
                 "username": username,
                 "password_hash": password_hash,
-                "data_criacao": datetime.now().isoformat()
+                "data_criacao": datetime.now(timezone.utc).isoformat()
             }
             res = self.client.table("utilizadores").insert(data).execute()
             return res.data[0]["id"] if res.data else -1
@@ -136,14 +142,11 @@ class Database:
             return f.encrypt(text.encode('utf-8')).decode('utf-8')
         except Exception as e:
             console.print(f"[red]Erro ao encriptar texto: {e}[/red]")
-            return text
+            raise e
 
     def _decrypt(self, text: str) -> str:
         if not text:
             return ""
-        if not text.startswith("gAAAAA"):
-            # Se não começar com o cabeçalho Fernet, é texto limpo
-            return text
         try:
             f = self._get_fernet()
             return f.decrypt(text.encode('utf-8')).decode('utf-8')
@@ -215,7 +218,7 @@ class Database:
                 "user_id": user_id,
                 "nome": nome,
                 "url": url,
-                "data_adicao": datetime.now().isoformat()
+                "data_adicao": datetime.now(timezone.utc).isoformat()
             }
             res = self.client.table("favoritos").upsert(data, on_conflict="user_id,url").execute()
             return True if res.data else False
@@ -265,12 +268,11 @@ class Database:
                 "user_id": user_id,
                 "url": url,
                 "titulo": titulo,
-                "data_visita": datetime.now().isoformat()
+                "data_visita": datetime.now(timezone.utc).isoformat()
             }
             self.client.table("historico").insert(data).execute()
         except Exception as e:
             console.print(f"[red]Erro em registar_visita: {e}[/red]")
-            pass
 
     @usar_pool
     def historico_recente(self, user_id: int, limite: int = 10) -> list[dict]:
@@ -314,7 +316,7 @@ class Database:
                 "user_id": user_id,
                 "comando": comando,
                 "resposta": resposta,
-                "data_comando": datetime.now().isoformat()
+                "data_comando": datetime.now(timezone.utc).isoformat()
             }
             self.client.table("comando_historico").insert(data).execute()
         except Exception as e:
@@ -376,7 +378,7 @@ class Database:
             data = {
                 "user_id": user_id,
                 "url": url,
-                "data_bloqueio": datetime.now().isoformat()
+                "data_bloqueio": datetime.now(timezone.utc).isoformat()
             }
             res = self.client.table("bloqueios").insert(data).execute()
             return True if res.data else False
@@ -425,7 +427,7 @@ class Database:
             data = {
                 "user_id": user_id,
                 "dados": json.dumps(dados),
-                "data_sessao": datetime.now().isoformat()
+                "data_sessao": datetime.now(timezone.utc).isoformat()
             }
             self.client.table("relatorios_sessao").insert(data).execute()
         except Exception as e:
@@ -457,7 +459,6 @@ class Database:
             self.client.table("preferencias").upsert(data).execute()
         except Exception as e:
             console.print(f"[red]Erro em guardar_preferencia: {e}[/red]")
-            pass
 
     @usar_pool
     def obter_preferencia(self, chave: str, padrao: str = "") -> str:

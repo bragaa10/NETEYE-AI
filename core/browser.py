@@ -36,25 +36,34 @@ class BrowserController:
         self._page = None
 
     def iniciar(self):
+        if self._pw is not None:
+            return
         console.print("[dim]🌐 A iniciar browser...[/dim]")
+        import os
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(
+        user_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "browser_user_data")
+        os.makedirs(user_data_dir, exist_ok=True)
+        self._ctx = self._pw.chromium.launch_persistent_context(
+            user_data_dir,
             headless=self.headless,
+            viewport={"width": 1024, "height": 600},
+            locale="pt-PT",
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
-                "--disable-dev-shm-usage"  # Reduzir uso de shared memory
+                "--disable-dev-shm-usage"
             ]
         )
-        # [OTIMIZAÇÃO] Viewport reduzido para 1024x600 (WVGA) em vez de 1280x720
-        # Reduz ~30% de consumo de memória durante o render
-        self._ctx = self._browser.new_context(viewport={"width": 1024, "height": 600}, locale="pt-PT")
         self._ctx.route("**/*", self._filtrar_recursos)
-        self._page = self._ctx.new_page()
-        console.print("[dim green][OK] Browser pronto (1024x600 otimizado).[/dim green]")
+        self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+        console.print("[dim green][OK] Browser pronto com contexto persistente (1024x600 otimizado).[/dim green]")
 
     def _filtrar_recursos(self, route, request):
         url = request.url.lower()
+        # Se for YouTube ou Google, permitir recursos para evitar quebras de players de vídeo
+        if "youtube.com" in url or "google.com" in url or "google" in url:
+            route.continue_()
+            return
         if any(b in url for b in BLOQUEAR) or request.resource_type in ("font",):
             route.abort()
         else:
@@ -62,23 +71,53 @@ class BrowserController:
 
     def fechar(self):
         try:
-            if self._browser: self._browser.close()
-            if self._pw: self._pw.stop()
+            if hasattr(self, '_page') and self._page:
+                try: self._page.close()
+                except Exception: pass
+            if hasattr(self, '_ctx') and self._ctx:
+                try: self._ctx.close()
+                except Exception: pass
+            if hasattr(self, '_browser') and self._browser:
+                try: self._browser.close()
+                except Exception: pass
+            if hasattr(self, '_pw') and self._pw:
+                try: self._pw.stop()
+                except Exception: pass
         except Exception as e:
-            # FIX: Falhas silenciosas tornam debugging impossível em produção.
             console.print(f"[dim red]Erro ao fechar browser: {e}[/dim red]")
+        finally:
+            self._page = None
+            self._ctx = None
+            self._browser = None
+            self._pw = None
 
     # ------------------------------------------------------------------
     # NAVEGAÇÃO & DETEÇÃO (Func 12)
     # ------------------------------------------------------------------
+
+    def _obter_timeout_adaptativo(self, url: str) -> int:
+        url_lower = url.lower()
+        # Timeout mais longo para sites conhecidamente pesados
+        if any(d in url_lower for d in ["youtube.com", "instagram.com", "facebook.com", "amazon", "linkedin.com", "twitter.com", "x.com"]):
+            return 15000  # 15 segundos
+        return self.timeout
 
     def navegar(self, url: str) -> dict:
         url = self._resolver_url(url)
         if not self._page: return {"sucesso": False, "erro": "browser não iniciado"}
         try:
             console.print(f"[dim]🌐 {url}[/dim]")
-            self._page.goto(url, timeout=self.timeout, wait_until="commit")
-            try: self._page.wait_for_load_state("domcontentloaded", timeout=4000)
+            timeout_adaptativo = self._obter_timeout_adaptativo(url)
+            self._page.goto(url, timeout=timeout_adaptativo, wait_until="commit")
+            try:
+                if "youtube.com" in url.lower():
+                    self._page.wait_for_load_state("domcontentloaded", timeout=8000)
+                    try:
+                        self._page.wait_for_selector("ytd-app", timeout=4000)
+                    except Exception:
+                        pass
+                else:
+                    self._page.wait_for_load_state("domcontentloaded", timeout=4000)
             except Exception as e:
                 console.print(f"[dim red]Aviso wait_for_load_state: {e}[/dim red]")
             
@@ -100,10 +139,59 @@ class BrowserController:
     def pesquisar_google(self, consulta: str) -> dict:
         """Realiza uma pesquisa no Google e carrega a página de resultados."""
         from urllib.parse import quote_plus
-        # FIX: quote_plus() trata caracteres especiais (acentos, &, #, etc.) corretamente.
-        # Substituição manual de espaços quebra URLs com caracteres especiais.
         url = f"https://www.google.com/search?q={quote_plus(consulta)}&hl=pt"
         return self.navegar(url)
+
+    def pesquisar_youtube(self, termo: str) -> dict:
+        """Pesquisa um termo no YouTube: navega para o YouTube, escreve na barra de pesquisa e submete."""
+        if not self._page: return {"sucesso": False, "erro": "browser não iniciado"}
+        try:
+            # Se ainda não estamos no YouTube, navegar primeiro
+            if "youtube.com" not in (self._page.url or "").lower():
+                res = self.navegar("https://www.youtube.com")
+                if not res.get("sucesso"):
+                    return res
+
+            # Seletores específicos do YouTube para a barra de pesquisa
+            seletores_yt = [
+                "input#search",
+                "input[name='search_query']",
+                "input[placeholder*='Pesquisar' i]",
+                "input[placeholder*='Search' i]",
+                "ytd-searchbox input",
+            ]
+            escrito = False
+            for sel in seletores_yt:
+                try:
+                    el = self._page.locator(sel).first
+                    if el.count() > 0 and el.is_visible():
+                        el.click(timeout=2000)
+                        el.fill(termo)
+                        escrito = True
+                        break
+                except Exception:
+                    continue
+
+            if not escrito:
+                return {"sucesso": False, "erro": "Não consegui encontrar a barra de pesquisa do YouTube."}
+
+            # Submeter a pesquisa
+            self._page.keyboard.press("Enter")
+            try:
+                self._page.wait_for_load_state("domcontentloaded", timeout=8000)
+            except Exception:
+                pass
+            self._page.wait_for_timeout(1000)
+            self._auto_resolver_interrupcoes()
+
+            return {
+                "sucesso": True,
+                "url": self._page.url,
+                "titulo": self._obter_titulo_rapido()
+            }
+        except Exception as e:
+            console.print(f"[red]Erro ao pesquisar YouTube: {e}[/red]")
+            return {"sucesso": False, "erro": str(e)[:80]}
 
     def _verificar_login(self) -> bool:
         """Verifica se a página atual parece ser de login."""
@@ -200,8 +288,30 @@ class BrowserController:
         if not self._page: return "O browser não está aberto."
         titulo = self._obter_titulo_rapido() or "Sem título"
         url = self._page.url
-        dominio = url.split('/')[2] if '//' in url else url
+        import urllib.parse
+        try:
+            dominio = urllib.parse.urlparse(url).netloc
+            if not dominio:
+                dominio = url
+        except Exception:
+            dominio = url.split('/')[2] if '//' in url else url
         return f"Estás no site {dominio}, na página intitulada: {titulo}."
+
+    def obter_estrutura_cabecalhos(self) -> dict:
+        """Extrai todos os cabeçalhos (H1-H6) da página para facilitar a navegação estrutural."""
+        if not self._page: return {"erro": "browser não iniciado"}
+        try:
+            cabecalhos = self._page.evaluate("""() => {
+                const elements = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+                return elements.map(el => ({
+                    tag: el.tagName.toLowerCase(),
+                    texto: el.innerText.trim(),
+                    id: el.id || ""
+                })).filter(item => item.texto.length > 0);
+            }""")
+            return {"sucesso": True, "cabecalhos": cabecalhos}
+        except Exception as e:
+            return {"sucesso": False, "erro": str(e)}
 
     # ------------------------------------------------------------------
     # HELPERS DE ACESSIBILIDADE ADICIONAIS (Melhoria Acessibilidade)
@@ -279,8 +389,37 @@ class BrowserController:
     # INTERAÇÃO MELHORADA (Bug 3)
     # ------------------------------------------------------------------
 
+    # Palavras/atributos que indicam que um elemento é publicidade — usados para
+    # evitar clicar acidentalmente em anúncios quando o utilizador pede "o vídeo"
+    # ou "o primeiro resultado" sem especificar.
+    _MARCADORES_ANUNCIO = [
+        "patrocinado", "sponsored", "anúncio", "anuncio", "ad ", " ad", "publicidade",
+        "ad-badge", "ytd-ad-slot", "ytd-promoted", "ads-visibility",
+    ]
+
+    def _elemento_e_anuncio(self, el) -> bool:
+        """Verifica heuristicamente se um elemento (ou os seus ancestrais próximos)
+        parece ser um anúncio, para evitar cliques acidentais em publicidade."""
+        try:
+            info = el.evaluate("""(node) => {
+                let cur = node;
+                let texto = '';
+                let classes = '';
+                for (let i = 0; i < 4 && cur; i++) {
+                    texto += ' ' + (cur.innerText || '').toLowerCase().slice(0, 80);
+                    classes += ' ' + (cur.className || '').toString().toLowerCase();
+                    classes += ' ' + (cur.tagName || '').toLowerCase();
+                    cur = cur.parentElement;
+                }
+                return texto + ' ' + classes;
+            }""")
+            info_lower = (info or "").lower()
+            return any(marcador in info_lower for marcador in self._MARCADORES_ANUNCIO)
+        except Exception:
+            return False
+
     def clicar_elemento(self, texto: str) -> dict:
-        if not self._page: return {"sucesso": False}
+        if not self._page: return {"sucesso": False, "erro": "browser não aberto"}
         texto_limpo = texto.strip().lower()
         
         # Verificar se foi mapeado no obter_elementos_interativos por ID numérico
@@ -294,32 +433,75 @@ class BrowserController:
             if hasattr(self, "_elementos_mapeados") and num in self._elementos_mapeados:
                 texto = self._elementos_mapeados[num]
 
+        texto_escaped = texto.replace("'", "\\'")
         seletores = [
-            f"text='{texto}'", f"button:has-text('{texto}')", f"a:has-text('{texto}')",
-            f"[aria-label*='{texto}' i]", f"[role='button']:has-text('{texto}')"
+            f"button:has-text('{texto_escaped}'):visible", f"a:has-text('{texto_escaped}'):visible",
+            f"[aria-label*='{texto_escaped}' i]:visible", f"[role='button']:has-text('{texto_escaped}'):visible"
         ]
         for s in seletores:
             try:
                 el = self._page.locator(s).first
-                if el.count() > 0:
+                if el.count() > 0 and el.is_visible(timeout=500):
+
+                    # Verificar se o elemento é provavelmente um anúncio antes de clicar.
+                    # Isto evita o cenário comum de "clicaste no anúncio em vez do
+                    # vídeo" quando o utilizador pede algo genérico como "o vídeo".
+                    if self._elemento_e_anuncio(el):
+                        console.print(f"[dim yellow]Elemento '{texto}' parece ser um anúncio — a ignorar e procurar próxima alternativa.[/dim yellow]")
+                        continue
+
+                    url_antes = self._page.url
+                    dom_antes = self._page.content()
+                    
                     el.click(timeout=3000)
+                    
+                    # Esperar estabilização do DOM ou navegação
+                    try:
+                        self._page.wait_for_load_state("domcontentloaded", timeout=1500)
+                    except Exception:
+                        pass
+                    self._page.wait_for_timeout(300)
+                    
                     self._auto_resolver_interrupcoes()
-                    return {"sucesso": True}
+                    
+                    url_depois = self._page.url
+                    dom_depois = self._page.content()
+                    
+                    # Se houve alteração de URL ou mudança no conteúdo do DOM, consideramos bem-sucedido
+                    if url_antes != url_depois or dom_antes != dom_depois:
+                        return {"sucesso": True, "titulo_pagina": self._obter_titulo_rapido()}
+                    else:
+                        console.print(f"[dim yellow]Aviso: clique em {s} bem-sucedido mas sem alteração detetável no URL ou DOM.[/dim yellow]")
             except Exception as e:
                 # FIX: Falhas silenciosas tornam debugging impossível em produção.
                 console.print(f"[dim red]clicar_elemento falhou ({s}): {e}[/dim red]")
                 continue
-        return self._clicar_posicao(texto)
+                
+        # Tentar clique posicional
+        res_pos = self._clicar_posicao(texto)
+        if res_pos.get("sucesso"):
+            return res_pos
+            
+        return {"sucesso": False, "erro": "Não foi possível clicar no elemento ou o clique não teve efeito detetável de mudança de estado na página."}
 
     def escrever_campo(self, label: str, texto: str) -> dict:
-        if not self._page: return {"sucesso": False}
         seletores = []
         if label:
+            label_escaped = label.replace("'", "\\'")
             seletores.extend([
-                f"input[placeholder*='{label}' i]:visible", f"input[name*='{label}' i]:visible",
-                f"input[aria-label*='{label}' i]:visible", f"label:has-text('{label}') + input:visible"
+                f"input[placeholder*='{label_escaped}' i]:visible", f"input[name*='{label_escaped}' i]:visible",
+                f"input[aria-label*='{label_escaped}' i]:visible", f"label:has-text('{label_escaped}') + input:visible"
             ])
-        seletores.extend(["input[type='search']:visible", "input[type='text']:visible", "input:not([type='hidden']):visible"])
+        # YouTube-specific search input selectors (prioritários para sites conhecidos)
+        seletores.extend([
+            "input#search:visible",
+            "input[name='search_query']:visible",
+            "ytd-searchbox input:visible",
+            "input[type='search']:visible",
+            "input[type='text']:visible",
+            "textarea:visible",
+            "input:not([type='hidden']):visible"
+        ])
 
         for s in seletores:
             try:
@@ -327,52 +509,60 @@ class BrowserController:
                 if el.count() > 0 and el.is_visible():
                     el.click(timeout=1500)
                     el.fill(texto)
+                    self._auto_resolver_interrupcoes()
                     return {"sucesso": True}
             except Exception as e:
                 # FIX: Falhas silenciosas tornam debugging impossível em produção.
                 console.print(f"[dim red]escrever_campo falhou ({s}): {e}[/dim red]")
                 continue
-        return {"sucesso": False}
+        return {"sucesso": False, "erro": "Não foi possível encontrar o campo de texto para preencher."}
 
     def pressionar_enter(self) -> dict:
+        if not self._page: return {"sucesso": False, "erro": "browser não iniciado"}
         try:
             self._page.keyboard.press("Enter")
             try: self._page.wait_for_load_state("domcontentloaded", timeout=2000)
             except Exception: pass
+            self._auto_resolver_interrupcoes()
             return {"sucesso": True}
         except Exception as e:
             console.print(f"[red]Erro ao pressionar Enter: {e}[/red]")
-            return {"sucesso": False}
+            return {"sucesso": False, "erro": str(e)}
 
     def tirar_screenshot(self) -> bytes | None:
         """
-        Tira screenshot otimizado (reduzido em 70% de tamanho).
-        [OTIMIZAÇÃO] Viewport reduzido + JPEG de baixa qualidade + cache da última screenshot.
+        Tira screenshot otimizado e de qualidade adequada para OCR/visão.
+        Garante que a página está estável antes do screenshot.
         """
         if not self._page: return None
         try:
-            # Viewport otimizado: 1024x600 em vez de 1280x720 (reduz 30% de dados)
+            # Esperar estabilização do DOM e renderização
+            try:
+                self._page.wait_for_load_state("domcontentloaded", timeout=2000)
+                self._page.wait_for_timeout(500)
+            except Exception:
+                pass
+
             vp = self._page.viewport_size or {"width": 1024, "height": 600}
             
-            # Screenshot em JPEG com qualidade 40% (vs 50% original) - mais compressão
+            # Screenshot em JPEG com qualidade 80% para garantir leitura precisa pela IA
             screenshot_bytes = self._page.screenshot(
                 type="jpeg", 
-                quality=40, 
+                quality=80, 
                 clip={
                     "x": 0, 
                     "y": 0, 
-                    "width": min(vp["width"], 1024),  # Limitar largura máxima
-                    "height": min(vp["height"], 600)   # Limitar altura máxima
+                    "width": min(vp["width"], 1024),
+                    "height": min(vp["height"], 600)
                 }
             )
             
-            # Guardar em memória (cache simples da última screenshot)
             self._last_screenshot = screenshot_bytes
             return screenshot_bytes
         except Exception as e:
-            console.print(f"[dim red]Erro tirar_screenshot: {e}[/dim red]")
+            console.print(f"[bold red]❌ Erro crítico ao tirar screenshot: {e}[/bold red]")
             return None
-    
+
     def obter_ultima_screenshot(self) -> bytes | None:
         """Retorna a última screenshot guardada em cache (evita tirar nova)."""
         return getattr(self, '_last_screenshot', None)
@@ -383,22 +573,42 @@ class BrowserController:
 
     def _auto_resolver_interrupcoes(self):
         if not self._page: return
-        # Otimizado: Combinar seletores para evitar loops de 300ms sequenciais
+        # Lista alargada de botões de cookies, popups e banners comuns
         botoes = [
+            # Rejeitar Cookies
             "button:has-text('Rejeitar tudo')", "a:has-text('Rejeitar tudo')",
             "button:has-text('Reject all')", "a:has-text('Reject all')",
+            "button:has-text('Rejeitar')", "a:has-text('Rejeitar')",
+            "button:has-text('Reject')", "a:has-text('Reject')",
+            # Aceitar/Concordar Cookies
+            "button:has-text('Aceitar tudo')", "a:has-text('Aceitar tudo')",
+            "button:has-text('Accept all')", "a:has-text('Accept all')",
+            "button:has-text('Aceitar')", "a:has-text('Aceitar')",
+            "button:has-text('Accept')", "a:has-text('Accept')",
+            "button:has-text('Agree')", "button:has-text('Concordo')",
+            # Fechar/Cancelar/Agora não / Premium / Promos
             "button:has-text('Fechar')", "a:has-text('Fechar')",
             "button:has-text('Close')", "a:has-text('Close')",
-            "button:has-text('Aceitar tudo')", "a:has-text('Aceitar tudo')",
-            "button:has-text('Accept all')", "a:has-text('Accept all')"
+            "button:has-text('Agora não')", "button:has-text('Not now')",
+            "button:has-text('Não, obrigado')", "button:has-text('Não obrigado')",
+            "button:has-text('No thanks')", "button:has-text('Skip trial')",
+            "button:has-text('Ignorar')",
+            # Seletores por ARIA Label
+            "[aria-label*='Rejeitar tudo' i]", "[aria-label*='Reject all' i]",
+            "[aria-label*='Aceitar tudo' i]", "[aria-label*='Accept all' i]",
+            "[aria-label*='Fechar' i]", "[aria-label*='Close' i]",
+            "[aria-label*='Não, obrigado' i]", "[aria-label*='No thanks' i]"
         ]
         seletor_combinado = ", ".join(botoes)
         try:
             el = self._page.locator(seletor_combinado).first
-            if el.is_visible(timeout=150):
-                el.click(timeout=1000)
-                time.sleep(0.1)
-        except Exception as e:
+            # Aumentar timeout para 800ms para aguardar renderização do popup
+            if el.is_visible(timeout=800):
+                console.print(f"[dim yellow]Pop-up/Consentimento detetado: clicando em '{el.inner_text().strip()}'[/dim yellow]")
+                el.click(timeout=1500)
+                # Dar tempo para fecho do popup
+                self._page.wait_for_timeout(300)
+        except Exception:
             pass
 
     def _obter_titulo_rapido(self) -> str:
@@ -411,20 +621,38 @@ class BrowserController:
         for nome, url in ATALHOS.items():
             if alvo.lower() in (nome, f"o {nome}"): return url
         if "." in alvo and " " not in alvo: return f"https://{alvo}"
-        return f"https://www.google.com/search?q={alvo.replace(' ','+')}&hl=pt"
+        import urllib.parse
+        return f"https://www.google.com/search?q={urllib.parse.quote_plus(alvo)}&hl=pt"
 
     def _clicar_posicao(self, alvo: str) -> dict:
         mapa = {"primeiro":0,"primeira":0,"segundo":1,"segunda":1,"terceiro":2}
         idx = next((i for k,i in mapa.items() if k in alvo.lower()), None)
-        if idx is None: return {"sucesso": False}
+        if idx is None: return {"sucesso": False, "erro": "Elemento posicional não mapeado."}
         try:
             els = self._page.locator("a:visible, button:visible").all()
             if len(els) > idx:
+                url_antes = self._page.url
+                dom_antes = self._page.content()
+                
                 els[idx].click(timeout=3000)
-                return {"sucesso": True}
+                
+                try:
+                    self._page.wait_for_load_state("domcontentloaded", timeout=1500)
+                except Exception:
+                    pass
+                self._page.wait_for_timeout(300)
+                self._auto_resolver_interrupcoes()
+                
+                url_depois = self._page.url
+                dom_depois = self._page.content()
+                
+                if url_antes != url_depois or dom_antes != dom_depois:
+                    return {"sucesso": True}
+                else:
+                    return {"sucesso": False, "erro": "O clique posicional não gerou alteração no estado da página."}
         except Exception as e:
-            pass
-        return {"sucesso": False}
+            return {"sucesso": False, "erro": f"Erro no clique posicional: {e}"}
+        return {"sucesso": False, "erro": "Elemento posicional correspondente não encontrado."}
 
 
 # ============================================================

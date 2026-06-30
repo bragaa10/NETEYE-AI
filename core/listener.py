@@ -79,6 +79,11 @@ class Listener:
         if self._stream:
             self._stream.stop()
             self._stream.close()
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def _get_vad_bytes(self, frame) -> bytes:
         frame_bytes = frame.tobytes()
@@ -135,8 +140,6 @@ class Listener:
                     
                     if tem_voz_forte:
                         # Contar frames consecutivos de voz durante a fala do speaker
-                        if not hasattr(self, '_interrupt_count'):
-                            self._interrupt_count = 0
                         self._interrupt_count += 1
                         
                         # Se detetados 5+ frames consecutivos de voz (~150ms), interromper o speaker
@@ -214,6 +217,7 @@ class Listener:
             self._audio_queue.put(indata[:, 0].copy())
 
     def _guardar_wav(self, frames: list) -> str | None:
+        tmp_path = None
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, prefix="NetEye_cmd_")
             tmp_path = tmp.name
@@ -227,4 +231,7 @@ class Listener:
             return tmp_path
         except Exception as e:
             console.print(f"[red]Erro ao guardar áudio: {e}[/red]")
+            if tmp_path and os.path.exists(tmp_path):
+                try: os.unlink(tmp_path)
+                except Exception: pass
             return None
