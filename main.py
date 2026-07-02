@@ -70,6 +70,9 @@ class NetEye:
         self.user_id    = user_id
         self.modo_texto = modo_texto
         self._stop_event = threading.Event()
+        # Sinalizado quando o EasyOCR termina o pré-carregamento em background.
+        # Se o módulo Vision não estiver disponível, é marcado de imediato (não bloqueia).
+        self._ocr_pronto = threading.Event()
         # Rastreia o último URL conhecido para detetar navegação real causada por cliques
         self._ultima_url_conhecida = ""
         
@@ -204,7 +207,12 @@ class NetEye:
                 elif "amazon" in url_lower:
                     self.speaker.falar("A abrir a Amazon, por favor aguarda...")
 
-                r = br.navegar(url)
+                audio_engine.start_loop("page_loading")
+                try:
+                    r = br.navegar(url)
+                finally:
+                    audio_engine.stop_loop("page_loading")
+                _tocar_resultado(r)
                 if r.get("sucesso"):
                     self.stats["visitas"] += 1
                     # Verificar se guardar_historico está ativo (Padrão: True)
@@ -228,6 +236,7 @@ class NetEye:
                     pass
 
                 r = br.clicar_elemento(texto)
+                _tocar_resultado(r)
 
                 if r.get("sucesso"):
                     try:
@@ -247,16 +256,23 @@ class NetEye:
                 return r
 
             a.registar_ferramenta("navegar",          navegar)
-            a.registar_ferramenta("pesquisar_google",  br.pesquisar_google)
-            a.registar_ferramenta("pesquisar_youtube", br.pesquisar_youtube)
+            a.registar_ferramenta("pesquisar_google",  lambda termo: _com_som(br.pesquisar_google, termo))
+            a.registar_ferramenta("pesquisar_youtube", lambda termo: _com_som(br.pesquisar_youtube, termo))
             a.registar_ferramenta("clicar",            clicar)
-            a.registar_ferramenta("escrever",          lambda texto: br.escrever_campo("", texto))
-            a.registar_ferramenta("pressionar_enter",  br.pressionar_enter)
+            a.registar_ferramenta("escrever",          lambda texto: _com_som(br.escrever_campo, "", texto))
+            a.registar_ferramenta("escrever_em_campo", lambda campo, texto: _com_som(br.escrever_em_campo, campo, texto))
+            a.registar_ferramenta("pressionar_enter",  lambda: _com_som(br.pressionar_enter))
+            a.registar_ferramenta("voltar_pagina",     lambda: _com_som(br.voltar_pagina))
+            a.registar_ferramenta("avancar_pagina",    lambda: _com_som(br.avancar_pagina))
+            a.registar_ferramenta("recarregar_pagina", lambda: _com_som(br.recarregar_pagina))
             
             # Novas Ferramentas Sénior (Func 4 & 8)
             a.registar_ferramenta("ler_pagina",       lambda: {"conteudo": br.extrair_conteudo_principal()})
             a.registar_ferramenta("onde_estou",       lambda: {"ok": br.obter_relatorio_localizacao()})
             a.registar_ferramenta("obter_estrutura_cabecalhos", br.obter_estrutura_cabecalhos)
+            a.registar_ferramenta("ir_para_cabecalho", br.ir_para_cabecalho)
+            a.registar_ferramenta("obter_elementos_interativos", br.obter_elementos_interativos)
+            a.registar_ferramenta("obter_memoria_navegacao", br.obter_memoria_navegacao)
             
             # Ferramenta OCR - lê o ecrã via screenshot + OCR (Func 4)
             try:
@@ -283,6 +299,8 @@ class NetEye:
                 # log: "Downloading detection model..." enquanto o utilizador
                 # esperava resposta). Pré-carregamos o modelo em background logo
                 # no arranque, para que esteja pronto antes de ser necessário.
+                # O evento self._ocr_pronto é sinalizado no fim, e iniciar() espera
+                # por ele antes de aceitar o primeiro comando do utilizador.
                 def _prewarm_ocr():
                     try:
                         from core.vision import _obter_reader
@@ -290,12 +308,19 @@ class NetEye:
                         console.print("[dim green][OK] EasyOCR pré-carregado em background.[/dim green]")
                     except Exception as e:
                         console.print(f"[dim yellow]⚠️ Pré-carregamento OCR falhou (será carregado na primeira utilização): {e}[/dim yellow]")
+                    finally:
+                        self._ocr_pronto.set()
                 threading.Thread(target=_prewarm_ocr, daemon=True).start()
 
             except ImportError:
                 console.print("[dim yellow]⚠️ Módulo Vision (OCR) não disponível[/dim yellow]")
+                # Sem módulo Vision não há nada a esperar — não bloquear o arranque.
+                self._ocr_pronto.set()
             
             a.registar_screenshot(br.tirar_screenshot)
+        else:
+            # Sem browser não há OCR de página possível — não bloquear o arranque.
+            self._ocr_pronto.set()
 
         # Controlo de Voz (Func 9)
         def ajustar_voz(tipo, delta):
@@ -322,7 +347,16 @@ class NetEye:
                 self.speaker.falar("Aviso importante: não consegui iniciar o navegador de internet. Por favor, verifica as dependências do Playwright.")
                 self.browser = None
         if self.listener: self.listener.iniciar()
-        
+
+        # Bloquear até o EasyOCR terminar o pré-carregamento (ver _prewarm_ocr em
+        # _ligar_ferramentas). Sem isto, o utilizador podia dar comandos que dependem
+        # de OCR antes do modelo estar pronto, ou o assistant.py podia tentar usar a
+        # ferramenta a meio do carregamento e travar a resposta de forma confusa.
+        if not self._ocr_pronto.is_set():
+            console.print("[dim]⏳ A aguardar conclusão do pré-carregamento do EasyOCR...[/dim]")
+            self.speaker.falar("Um momento, estou a preparar o módulo de leitura visual.")
+            self._ocr_pronto.wait()
+
         audio_engine.play("system_ready") # Feedback Func 7
         self.speaker.falar("NetEye pronto. Estou à escuta.")
         
@@ -375,16 +409,17 @@ class NetEye:
     def _loop_voz(self):
         while not self._stop_event.is_set():
             try:
-                # Se houver confirmação pendente, entramos no modo de confirmação rápida!
-                if self.assistant._pendente_confirmacao:
+                # Se houver confirmação ou pergunta pendente, entramos no modo de confirmação rápida sem wake word.
+                if self.assistant._pendente_confirmacao or self.assistant._pergunta_pendente:
                     self.speaker.esperar()
-                    console.print("[yellow]⏳ A aguardar confirmação rápida (sim/não)...[/yellow]")
-                    audio_path = self.listener.ouvir_comando(speaker=self.speaker, ignorar_wake_word=True, timeout=10.0)
+                    console.print("[yellow]⏳ A aguardar resposta rápida sem wake word...[/yellow]")
+                    audio_path = self.listener.ouvir_comando(speaker=self.speaker, ignorar_wake_word=True, timeout=8.0)
                     
                     if audio_path == "TIMEOUT" or not audio_path:
                         console.print("[red]⏱️ Timeout ou sem resposta na confirmação rápida.[/red]")
                         self.assistant._pendente_confirmacao = None
-                        self.speaker.falar("Tempo limite esgotado. Ação cancelada.")
+                        self.assistant._pergunta_pendente = False
+                        self.speaker.falar("Tempo limite esgotado. Voltei ao modo normal de escuta.")
                         continue
                     
                     self.stats["comandos"] += 1

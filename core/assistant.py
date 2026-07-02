@@ -262,7 +262,8 @@ class Assistant:
             "4. Quando o resultado de um clique vier acompanhado de um screenshot, OLHA atentamente para a imagem antes de descrever o que aconteceu. Não assumas que clicaste no elemento certo só porque a ferramenta devolveu sucesso — confirma visualmente o título do vídeo, o texto do botão ou o conteúdo real que aparece no screenshot antes de descrever o resultado ao utilizador.\n"
             "5. Se o utilizador disser que clicaste no elemento errado (ex: 'isso é um anúncio', 'não era esse'), confia totalmente nele, pede desculpa de forma breve e tenta corrigir com a próxima ação — nunca discutas ou repitas a afirmação anterior.\n"
             "6. Quando o texto que pretendes clicar for ambíguo, genérico ou quando os elementos clicáveis óbvios (botões com texto claro) não resolverem a tarefa, usa a ferramenta ler_ecra_ocr para confirmar visualmente o conteúdo do ecrã antes de tentar clicar — não dependas apenas de suposições sobre o que está na página.\n"
-            "7. Em páginas de resultados do YouTube ou Google, distingue claramente anúncios patrocinados (geralmente marcados como 'Patrocinado', 'Ad' ou no topo da lista) dos resultados orgânicos — prefere sempre clicar no primeiro resultado orgânico, a menos que o utilizador peça explicitamente um anúncio."
+            "7. Em páginas de resultados do YouTube ou Google, distingue claramente anúncios patrocinados (geralmente marcados como 'Patrocinado', 'Ad' ou no topo da lista) dos resultados orgânicos — prefere sempre clicar no primeiro resultado orgânico, a menos que o utilizador peça explicitamente um anúncio.\n"
+            "8. Nunca afirmes que uma ação teve sucesso sem confirmação do resultado da ferramenta. Se o resultado indicar falha ou ausência de mudança de estado, comunica isso de forma direta e sugere uma alternativa concreta, nunca peças desculpa vago sem ação corretiva."
         )
 
         tools = [
@@ -277,7 +278,7 @@ class Assistant:
             },
             {
                 "name": "clicar",
-                "description": "Clica num elemento visível na página (botão, link, etc) especificado pelo texto. NÃO uses para pesquisar no YouTube ou Google — usa pesquisar_youtube ou pesquisar_google em vez disso.",
+                "description": "Clica num elemento visível na página por ID numérico data-neteye-id ou por texto. Se houver lista de elementos, prefere sempre o número. NÃO uses para pesquisar no YouTube ou Google — usa pesquisar_youtube ou pesquisar_google.",
                 "input_schema": {
                     "type": "object",
                     "properties": {"texto": {"type": "string"}},
@@ -321,6 +322,18 @@ class Assistant:
                 }
             },
             {
+                "name": "escrever_em_campo",
+                "description": "Escreve texto num campo específico. O parâmetro campo pode ser um ID numérico obtido em obter_elementos_interativos ou uma descrição como email, nome de utilizador ou palavra-passe.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "campo": {"type": "string", "description": "ID numérico do campo ou descrição textual do campo"},
+                        "texto": {"type": "string", "description": "Texto a inserir no campo"}
+                    },
+                    "required": ["campo", "texto"]
+                }
+            },
+            {
                 "name": "pressionar_enter",
                 "description": "Pressiona a tecla Enter no browser para enviar formulários ou pesquisas.",
                 "input_schema": {"type": "object", "properties": {}}
@@ -346,6 +359,46 @@ class Assistant:
             {
                 "name": "ler_ecra_ocr",
                 "description": "Lê o conteúdo visível do ecrã usando OCR (útil para páginas com conteúdo dinâmico ou imagens).",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "obter_elementos_interativos",
+                "description": "Lista e numera até 40 elementos visíveis por chamada, separados em campos de texto e elementos clicáveis. Injeta data-neteye-id para clique/escrita robustos. Usa quando o utilizador pedir opções, links, botões, campos, ou quando o alvo for ambíguo. Para mais resultados, chama novamente com inicio=proximo_inicio.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "pagina": {"type": "integer", "description": "Página lógica de 40 elementos, começando em 1"},
+                        "inicio": {"type": "integer", "description": "Índice inicial devolvido em proximo_inicio para pedir mais elementos"}
+                    }
+                }
+            },
+            {
+                "name": "ir_para_cabecalho",
+                "description": "Desloca a página para um cabeçalho por texto, ID de cabeçalho, seguinte ou anterior. Usa depois de obter_estrutura_cabecalhos quando o utilizador disser vai para uma secção como Desporto.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"alvo": {"type": "string"}},
+                    "required": ["alvo"]
+                }
+            },
+            {
+                "name": "voltar_pagina",
+                "description": "Volta para a página anterior usando o histórico nativo do browser e confirma se o estado mudou.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "avancar_pagina",
+                "description": "Avança para a página seguinte usando o histórico nativo do browser e confirma se o estado mudou.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "recarregar_pagina",
+                "description": "Recarrega a página atual com reload nativo e devolve confirmação do estado real.",
+                "input_schema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "obter_memoria_navegacao",
+                "description": "Obtém os últimos elementos, cabeçalhos, páginas e cliques relevantes vistos nesta sessão para resolver referências como o vídeo que vimos há pouco ou a pesquisa anterior.",
                 "input_schema": {"type": "object", "properties": {}}
             },
             {

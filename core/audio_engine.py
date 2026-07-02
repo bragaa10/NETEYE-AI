@@ -25,6 +25,7 @@ class AudioEngine:
     
     def __init__(self):
         self.base_path = os.path.join(os.path.dirname(__file__), "..", "assets", "sounds")
+        self._loop_stop_events = {}
         if not os.path.exists(self.base_path):
             os.makedirs(self.base_path, exist_ok=True)
             console.print(f"[dim yellow]Caminho de sons criado: {self.base_path}[/dim yellow]")
@@ -33,6 +34,9 @@ class AudioEngine:
         self._gerar_beep("mic_on", [880], 0.08)
         self._gerar_beep("mic_off", [440], 0.08)
         self._gerar_beep("system_ready", [550, 880], 0.15)
+        self._gerar_beep("action_success", [660, 990], 0.12)
+        self._gerar_beep("action_error", [220, 185], 0.14)
+        self._gerar_beep("page_loading", [520], 0.16)
 
     def _gerar_beep(self, nome: str, frequencias: list, duracao: float = 0.1, sample_rate: int = 16000):
         path = os.path.join(self.base_path, f"{nome}.wav")
@@ -64,6 +68,28 @@ class AudioEngine:
             console.print(f"[dim green][OK] Som sintetizado gerado: {nome}.wav[/dim green]")
         except Exception as e:
             console.print(f"[dim red]Erro ao gerar som {nome}: {e}[/dim red]")
+
+    def start_loop(self, sound_name: str, interval: float = 0.32):
+        """Toca um som curto em loop até stop_loop ser chamado."""
+        if sound_name in self._loop_stop_events:
+            return
+        stop_event = threading.Event()
+        self._loop_stop_events[sound_name] = stop_event
+
+        def _loop():
+            path = os.path.join(self.base_path, f"{sound_name}.wav")
+            while not stop_event.is_set():
+                if os.path.exists(path):
+                    self._play_wav(path)
+                stop_event.wait(interval)
+            self._loop_stop_events.pop(sound_name, None)
+
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def stop_loop(self, sound_name: str):
+        event = self._loop_stop_events.get(sound_name)
+        if event:
+            event.set()
 
     def play(self, sound_name: str):
         """

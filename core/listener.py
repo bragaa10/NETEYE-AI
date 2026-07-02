@@ -105,11 +105,11 @@ class Listener:
         inicio_idle = time.time()
 
         # Resetar estado se estivermos a usar wake word e não for para ignorar
-        if self.ww_model:
-            if ignorar_wake_word:
-                self._active_listening = True
-            else:
-                self._active_listening = False
+        if ignorar_wake_word:
+            self._active_listening = True
+            audio_engine.play("mic_on")
+        elif self.ww_model:
+            self._active_listening = False
 
         # Limpar queue
         while not self._audio_queue.empty():
@@ -119,7 +119,7 @@ class Listener:
             # Watchdog/Timeout
             tempo_idle = time.time() - inicio_idle
             if not a_gravar and (tempo_idle > timeout):
-                if timeout == 10.0:
+                if ignorar_wake_word:
                     return "TIMEOUT"
                 return "TIMEOUT_IDLE"
 
